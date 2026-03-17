@@ -22,6 +22,10 @@ impl Navigator {
     pub fn refresh(&mut self) {
         self.entries.clear();
 
+        if let Some(parent)=self.path.parent(){
+            self.entries.push(parent.to_path_buf());
+        }
+
         if let Ok(read) = fs::read_dir(&self.path) {
             for entry in read.flatten() {
                 self.entries.push(entry.path());
