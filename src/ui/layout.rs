@@ -1,6 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem,ListState},
+    style::{Style,Modifier},
     Frame,
 };
 
@@ -49,13 +50,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .collect();
 
     let left =
-        List::new(left_items).block(Block::default().title(left_title).borders(Borders::ALL));
+        List::new(left_items).block(Block::default().title(left_title).borders(Borders::ALL))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     let right =
-        List::new(right_items).block(Block::default().title(right_title).borders(Borders::ALL));
+        List::new(right_items).block(Block::default().title(right_title).borders(Borders::ALL))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-    frame.render_widget(left, panes[0]);
-    frame.render_widget(right, panes[1]);
+    let mut left_state=ListState::default();
+    left_state.select(Some(app.left.cursor));
+
+    let mut right_state=ListState::default();
+    right_state.select(Some(app.right.cursor));
+
+    frame.render_stateful_widget(left, panes[0], &mut left_state);
+    frame.render_stateful_widget(right, panes[1], &mut right_state);
 
     let status = Block::default().title("rex | q = quit | Tab = switch pane");
     frame.render_widget(status, vertical[1]);
