@@ -1,11 +1,12 @@
 mod app;
+mod fs;
 mod ui;
 
 use app::{App, Pane};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
-    terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
@@ -35,6 +36,25 @@ fn main() -> Result<(), io::Error> {
                         Pane::Right => Pane::Left,
                     }
                 }
+                KeyCode::Char('j') => match app.active_pane {
+                    Pane::Left => app.left.move_down(),
+                    Pane::Right => app.right.move_down(),
+                },
+
+                KeyCode::Char('k') => match app.active_pane {
+                    Pane::Left => app.left.move_up(),
+                    Pane::Right => app.right.move_up(),
+                },
+
+                KeyCode::Char('l') => match app.active_pane {
+                    Pane::Left => app.left.enter(),
+                    Pane::Right => app.right.enter(),
+                },
+
+                KeyCode::Char('h') => match app.active_pane {
+                    Pane::Left => app.left.back(),
+                    Pane::Right => app.right.back(),
+                },
 
                 _ => {}
             }
