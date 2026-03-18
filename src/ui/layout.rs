@@ -1,7 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, List, ListItem,ListState},
-    style::{Style,Modifier,Color},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
 use toml::to_string;
@@ -31,67 +31,63 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .entries
         .iter()
         .map(|p| {
-            let name = if let Some(parent)=app.left.path.parent(){
-                if p==parent{
-                    "..".into()
-                }else{
-                    p.file_name().unwrap().to_string_lossy()
-                }
-            }else{
-                p.file_name().unwrap().to_string_lossy()
-            };
+            let name = p.file_name().unwrap().to_string_lossy();
+            let icon = get_icon(p);
 
-            if p.is_dir(){
-                ListItem::new(format!("📁 {}",name))
-                    .style(Style::default().fg(Color::Cyan))
-            }else{
-                ListItem::new(format!("📄 {}",name))
-                    .style(Style::default().fg(Color::White))
+            let item = format!("{} {}", icon, name);
+
+            if p.is_dir() {
+                ListItem::new(item).style(Style::default().fg(Color::Cyan))
+            } else {
+                ListItem::new(item)
             }
         })
         .collect();
 
-    let preview_items:Vec<ListItem>=if let Some(path)=app.left.entries.get(app.left.cursor){
-        if path.is_dir(){
-            match std::fs::read_dir(path){
-                Ok(read)=>read
+    let preview_items: Vec<ListItem> = if let Some(path) = app.left.entries.get(app.left.cursor) {
+        if path.is_dir() {
+            match std::fs::read_dir(path) {
+                Ok(read) => read
                     .flatten()
-                    .map(|e|{
-                        let name=e.file_name().to_string_lossy().to_string();
-                        ListItem::new(name)
+                    .map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        let icon = get_icon(&e.path());
+                        ListItem::new(format!("{} {}", icon, name))
                     })
-                .collect(),
-                Err(_)=>vec![ListItem::new("Cannot read directroy")],
+                    .collect(),
+                Err(_) => vec![ListItem::new("Cannot read directroy")],
             }
-        } else{
-            match std::fs::read_to_string(path){
-                Ok(content)=>content
+        } else {
+            match std::fs::read_to_string(path) {
+                Ok(content) => content
                     .lines()
                     .take(20)
-                    .map(|line| ListItem::new(line.to_string())
-                        .style(Style::default().fg(Color::Gray)))
+                    .map(|line| {
+                        ListItem::new(line.to_string()).style(Style::default().fg(Color::Gray))
+                    })
                     .collect(),
 
-                    Err(_)=>vec![ListItem::new("Binary or unreadable file")],
+                Err(_) => vec![ListItem::new("Binary or unreadable file")],
             }
         }
-    } else{
+    } else {
         vec![ListItem::new("No file selected")]
     };
 
-    let left =
-        List::new(left_items).block(Block::default().title(left_title).borders(Borders::ALL))
-        .highlight_style(Style::default()
-            .bg(Color::Blue)
-            .bg(Color::Black)
-            .add_modifier(Modifier::BOLD));
+    let left = List::new(left_items)
+        .block(Block::default().title(left_title).borders(Borders::ALL))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .bg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
 
-    let right =List::new(preview_items)
-        .block(Block::default().title("Preview").borders(Borders::ALL));
+    let right =
+        List::new(preview_items).block(Block::default().title("Preview").borders(Borders::ALL));
 
-    let mut left_state=ListState::default();
+    let mut left_state = ListState::default();
     left_state.select(Some(app.left.cursor));
-
 
     frame.render_stateful_widget(left, panes[0], &mut left_state);
     frame.render_widget(right, panes[1]);
@@ -100,4 +96,57 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .style(Style::default().bg(Color::DarkGray))
         .title("rex | q = quit | Tab = switch pane");
     frame.render_widget(status, vertical[1]);
+}
+
+fn get_icon(path: &std::path::Path) -> &'static str {
+    if path.is_dir() {
+        return "📁";
+    }
+
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+    {
+        Some(ext) => match ext.as_str() {
+            "rs" => "🦀",
+
+            "c" => "🔵",
+            "cpp" | "cc" | "cxx" => "🟣",
+            "h" | "hpp" => "📘",
+            "java" => "☕",
+            "py" => "🐍",
+            "js" => "🟡",
+            "ts" => "🔷",
+
+            "ipynb" => "📓",
+
+            "xls" | "xlsx" => "📊",
+            "doc" | "docx" => "📄",
+            "ppt" | "pptx" => "📽️",
+
+            "json" => "🧾",
+            "toml" => "⚙️",
+            "yaml" | "yml" => "📋",
+
+            "md" => "📘",
+            "txt" => "📄",
+            "pdf" => "📕",
+
+            "jpg" | "jpeg" | "png" | "gif" => "🖼️",
+            "mp4" | "mkv" => "🎬",
+            "mp3" | "wav" => "🎵",
+
+            "zip" | "tar" | "gz" | "7z" => "📦",
+
+            "exe" | "bin" | "sh" => "⚡",
+
+            "html" | "htm" => "🌐",
+            "css" => "🎨",
+            "scss" | "sass" => "💅",
+
+            _ => "📄",
+        },
+        None => "📄",
+    }
 }

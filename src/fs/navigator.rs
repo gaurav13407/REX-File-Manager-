@@ -22,7 +22,7 @@ impl Navigator {
     pub fn refresh(&mut self) {
         self.entries.clear();
 
-        if let Some(parent)=self.path.parent(){
+        if let Some(parent) = self.path.parent() {
             self.entries.push(parent.to_path_buf());
         }
 
