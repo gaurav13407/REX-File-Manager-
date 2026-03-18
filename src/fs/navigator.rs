@@ -32,7 +32,32 @@ impl Navigator {
             }
         }
 
-        self.entries.sort();
+        self.entries.sort_by(|a,b|{
+            //keep parent at top 
+            if let Some(parent)=self.path.parent(){
+                if a==parent{
+                    return std::cmp::Ordering::Less;
+                }
+                if b== parent{
+                    return std::cmp::Ordering::Greater;
+                }
+            }
+            let a_is_dir=a.is_dir();
+            let b_is_dir=b.is_dir();
+
+            match (a_is_dir,b_is_dir){
+                //Folder first 
+                (true,false)=>std::cmp::Ordering::Less,
+                (false,true)=>std::cmp::Ordering::Greater,
+
+                //same type->sort by name 
+                _ =>a.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .cmp(&b.file_name().unwrap().to_string_lossy().to_lowercase()),
+            }
+        });
 
         if self.cursor >= self.entries.len() {
             self.cursor = 0;
