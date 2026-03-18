@@ -31,14 +31,32 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .entries
         .iter()
         .map(|p| {
-            let name = p.file_name().unwrap().to_string_lossy();
-            let icon = get_icon(p);
+            let is_parent=app.left.path.parent().map_or(false, |parent| p==parent);
 
-            let item = format!("{} {}", icon, name);
+            let name=if is_parent{
+                p.file_name()
+                    .unwrap_or_else(|| p.as_os_str())
+                    .to_string_lossy()
+            }else{
+                p.file_name().unwrap().to_string_lossy()
+            };
 
-            if p.is_dir() {
-                ListItem::new(item).style(Style::default().fg(Color::Cyan))
-            } else {
+            let icon=if is_parent{
+                "⬆️"
+            }else{
+                get_icon(p)
+            };
+
+            let item=format!("{} {}",icon,name);
+
+            if is_parent{
+                ListItem::new(item)
+                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+
+            } else if p.is_dir(){
+                ListItem::new(item)
+                    .style(Style::default().fg(Color::Cyan))
+            }else{
                 ListItem::new(item)
             }
         })
