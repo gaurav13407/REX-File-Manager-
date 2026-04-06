@@ -4,11 +4,12 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
 };
+use tokio::select;
 use toml::to_string;
 
 use crate::app::{App, Pane};
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
 
     let vertical = Layout::default()
@@ -31,36 +32,35 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .entries
         .iter()
         .map(|p| {
-            let is_parent=app.left.path.parent().map_or(false, |parent| p==parent);
+            let is_parent = app.left.path.parent().map_or(false, |parent| p == parent);
 
-            let name=if is_parent{
+            let name = if is_parent {
                 p.file_name()
                     .unwrap_or_else(|| p.as_os_str())
                     .to_string_lossy()
-            }else{
+            } else {
                 p.file_name().unwrap().to_string_lossy()
             };
 
-            let icon=if is_parent{
-                "⬆️"
-            }else{
-                get_icon(p)
-            };
+            let icon = if is_parent { "⬆️" } else { get_icon(p) };
 
-            let item=format!("{} {}",icon,name);
+            let item = format!("{} {}", icon, name);
 
-            if is_parent{
-                ListItem::new(item)
-                    .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
-
-            } else if p.is_dir(){
-                ListItem::new(item)
-                    .style(Style::default().fg(Color::Cyan))
-            }else{
+            if is_parent {
+                ListItem::new(item).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if p.is_dir() {
+                ListItem::new(item).style(Style::default().fg(Color::Cyan))
+            } else {
                 ListItem::new(item)
             }
         })
         .collect();
+
+    let visible_height = panes[1].height as usize - 2;
 
     let preview_items: Vec<ListItem> = if let Some(path) = app.left.entries.get(app.left.cursor) {
         if path.is_dir() {
@@ -79,7 +79,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
             match std::fs::read_to_string(path) {
                 Ok(content) => content
                     .lines()
-                    .take(20)
+                    .skip(app.preview_scroll)
+                    .take(visible_height)
                     .map(|line| {
                         ListItem::new(line.to_string()).style(Style::default().fg(Color::Gray))
                     })
@@ -92,23 +93,57 @@ pub fn draw(frame: &mut Frame, app: &App) {
         vec![ListItem::new("No file selected")]
     };
 
-    let left = List::new(left_items)
-        .block(Block::default().title(left_title).borders(Borders::ALL))
-        .highlight_style(
-            Style::default()
-                .bg(Color::Blue)
-                .bg(Color::Black)
-                .add_modifier(Modifier::BOLD),
-        );
+    let right_title = match app.active_pane {
+        Pane::Right => "Preview *",
+        _ => "Preview",
+    };
 
-    let right =
-        List::new(preview_items).block(Block::default().title("Preview").borders(Borders::ALL));
+    let left_block = Block::default()
+        .title(left_title)
+        .borders(Borders::ALL)
+        .border_style(match app.active_pane {
+            Pane::Left => Style::default().fg(Color::Yellow),
+            _ => Style::default(),
+        });
+
+    let right_block = Block::default()
+        .title(right_title)
+        .borders(Borders::ALL)
+        .border_style(match app.active_pane {
+            Pane::Right => Style::default().fg(Color::Yellow),
+            _ => Style::default(),
+        });
+
+    let left = List::new(left_items).block(left_block).highlight_style(
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let right = List::new(preview_items).block(right_block).highlight_style(
+        Style::default()
+            .bg(Color::Blue)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut left_state = ListState::default();
-    left_state.select(Some(app.left.cursor));
+    if matches!(app.active_pane, Pane::Left) {
+        left_state.select(Some(app.left.cursor));
+    } else {
+        left_state.select(None);
+    }
 
     frame.render_stateful_widget(left, panes[0], &mut left_state);
-    frame.render_widget(right, panes[1]);
+    let mut right_state = ListState::default();
+    if matches!(app.active_pane, Pane::Right) {
+        right_state.select(Some(app.preview_cursor));
+    } else {
+        right_state.select(None);
+    }
+
+    frame.render_stateful_widget(right, panes[1], &mut right_state);
 
     let status = Block::default()
         .style(Style::default().bg(Color::DarkGray))

@@ -1,5 +1,4 @@
 use crate::fs::navigator::Navigator;
-use std::path::PathBuf;
 pub enum Pane {
     Left,
     Right,
@@ -7,9 +6,13 @@ pub enum Pane {
 
 pub struct App {
     pub left: Navigator,
-    pub right: Navigator,
+    pub preview_content: Vec<String>,
     pub active_pane: Pane,
     pub should_quit: bool,
+    pub preview_mode: bool,
+    pub preview_scroll: usize,
+    pub preview_cursor: usize,
+    pub visible_height:usize,
 }
 
 impl App {
@@ -18,9 +21,13 @@ impl App {
 
         Self {
             left: Navigator::new(cwd.clone()),
-            right: Navigator::new(cwd),
             active_pane: Pane::Left,
             should_quit: false,
+            preview_mode: false,
+            preview_scroll: 0,
+            preview_content: Vec::new(),
+            preview_cursor: 0,
+            visible_height:0,
         }
     }
 }
