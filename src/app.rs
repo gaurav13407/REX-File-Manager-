@@ -12,7 +12,7 @@ pub struct App {
     pub preview_mode: bool,
     pub preview_scroll: usize,
     pub preview_cursor: usize,
-    pub visible_height:usize,
+    pub visible_height: usize,
 }
 
 impl App {
@@ -27,7 +27,40 @@ impl App {
             preview_scroll: 0,
             preview_content: Vec::new(),
             preview_cursor: 0,
-            visible_height:0,
+            visible_height: 0,
+        }
+    }
+
+    /// Enforce all scroll invariants in one place.
+    /// Call this after any mutation of preview_cursor, preview_scroll,
+    /// or visible_height (including after a terminal resize).
+    pub fn clamp_scroll(&mut self, total_lines: usize, visible_height: usize) {
+        if total_lines == 0 || visible_height == 0 {
+            self.preview_cursor = 0;
+            self.preview_scroll = 0;
+            return;
+        }
+
+        // 1. Cursor must stay within the content.
+        let max_cursor = total_lines.saturating_sub(1);
+        if self.preview_cursor > max_cursor {
+            self.preview_cursor = max_cursor;
+        }
+
+        // 2. Scroll down to reveal the cursor.
+        if self.preview_cursor >= self.preview_scroll + visible_height {
+            self.preview_scroll = self.preview_cursor - visible_height + 1;
+        }
+
+        // 3. Scroll up to reveal the cursor.
+        if self.preview_cursor < self.preview_scroll {
+            self.preview_scroll = self.preview_cursor;
+        }
+
+        // 4. Never leave empty rows at the bottom.
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        if self.preview_scroll > max_scroll {
+            self.preview_scroll = max_scroll;
         }
     }
 }
