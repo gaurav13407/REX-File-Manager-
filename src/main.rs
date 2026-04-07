@@ -11,7 +11,6 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
-use std::thread;
 use std::io;
 
 fn main() -> Result<(), io::Error> {
@@ -23,25 +22,34 @@ fn main() -> Result<(), io::Error> {
 
     let mut app = App::new();
 
-    let (tx,rx)=channel();
+     let (tx, rx) = channel::<notify::Result<notify::Event>>();
 
     //clone path to watch 
     let watch_path=app.left.path.clone();
 
-    thread::spawn(move|| {
-        let mut watcher:RecommendedWatcher=
-            Watcher::new(tx,notify::Config::default()).unwrap();
+    let (tx,rx)=channel();
 
-        watcher
-            .watch(&watch_path, RecursiveMode::NonRecursive)
-            .unwrap();
-        loop {
-            //keep thrad alive 
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-    });
+    let mut watcher:RecommendedWatcher=
+        Watcher::new(tx,notify::Config::default()).unwrap();
+
+    //start watching initial path 
+    watcher 
+        .watch(&app.left.path, RecursiveMode::NonRecursive)
+        .unwrap();
+
+    let mut current_watch_path=app.left.path.clone();
 
     while !app.should_quit {
+        if app.left.path!=current_watch_path{
+            watcher.unwatch(&current_watch_path).ok();
+
+            //watch new 
+            watcher
+                .watch(&app.left.path, RecursiveMode::NonRecursive)
+                .ok();
+
+            current_watch_path=app.left.path.clone();
+        }
         terminal.draw(|frame| {
             ui::layout::draw(frame, &mut app);
         })?;
