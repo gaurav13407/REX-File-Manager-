@@ -9,7 +9,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::sync::mpsc::channel;
+use std::thread;
 use std::io;
 
 fn main() -> Result<(), io::Error> {
@@ -21,12 +23,41 @@ fn main() -> Result<(), io::Error> {
 
     let mut app = App::new();
 
+    let (tx,rx)=channel();
+
+    //clone path to watch 
+    let watch_path=app.left.path.clone();
+
+    thread::spawn(move|| {
+        let mut watcher:RecommendedWatcher=
+            Watcher::new(tx,notify::Config::default()).unwrap();
+
+        watcher
+            .watch(&watch_path, RecursiveMode::NonRecursive)
+            .unwrap();
+        loop {
+            //keep thrad alive 
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    });
+
     while !app.should_quit {
         terminal.draw(|frame| {
             ui::layout::draw(frame, &mut app);
         })?;
 
-        if let Event::Key(key) = event::read()? {
+
+         
+            if rx.try_recv().is_ok() {
+            app.left.refresh();
+            if !app.left.entries.is_empty() {
+                app.left.cursor = app.left.cursor.min(app.left.entries.len() - 1);
+            } else {
+                app.left.cursor = 0;
+            }
+        }
+        if event::poll(std::time::Duration::from_millis(50))?{
+            if let Event::Key(key) = event::read()? {
             // Compute total_lines once per event for the currently previewed file.
             let total_lines = app
                 .left
@@ -36,6 +67,7 @@ fn main() -> Result<(), io::Error> {
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .map(|c| c.lines().count())
                 .unwrap_or(0);
+
 
             match key.code {
                 KeyCode::Char('q') => app.should_quit = true,
@@ -73,12 +105,14 @@ fn main() -> Result<(), io::Error> {
                         let vh = app.visible_height;
                         app.clamp_scroll(total_lines, vh);
                     }
+                
                 },
 
                 KeyCode::Char('l') => {
                     if !app.preview_mode {
                         if let Pane::Left = app.active_pane {
                             app.left.enter();
+                            app.left.refresh();
                         }
                     }
                 }
@@ -87,6 +121,7 @@ fn main() -> Result<(), io::Error> {
                     if !app.preview_mode {
                         if let Pane::Left = app.active_pane {
                             app.left.back();
+                            app.left.refresh();
                         }
                     }
                 }
@@ -95,12 +130,14 @@ fn main() -> Result<(), io::Error> {
                     if !app.preview_mode {
                         if let Pane::Left = app.active_pane {
                             app.left.enter();
+                            app.left.refresh();
                         }
                     }
                 }
 
                 _ => {}
             }
+        }
         }
     }
 
