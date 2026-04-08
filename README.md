@@ -26,9 +26,10 @@ A fast, keyboard-driven TUI file manager written in Rust using [ratatui](https:/
 git clone https://github.com/yourusername/rex.git
 cd rex
 
-# Install fd (for search)
+# Install fd (optional but recommended — faster search)
 sudo apt install fd-find   # Ubuntu/Debian
 # or: sudo pacman -S fd    # Arch
+# Falls back to built-in 'find' if fd is not installed
 
 # Run
 cargo run

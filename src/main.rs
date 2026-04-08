@@ -49,16 +49,16 @@ fn spawn_search(
 ) {
     std::thread::spawn(move || {
         let max_depth = if global { "8" } else { "5" };
-        let output = std::process::Command::new("fd")
-            .arg(&query)
-            .arg(&search_root)
+
+        // Try fd (fastest) → fdfind (Debian name) → fallback to built-in find
+        let fd_output = std::process::Command::new("fd")
+            .arg(&query).arg(&search_root)
             .arg("--max-depth").arg(max_depth)
             .arg("--color").arg("never")
             .output()
             .or_else(|_| {
                 std::process::Command::new("fdfind")
-                    .arg(&query)
-                    .arg(&search_root)
+                    .arg(&query).arg(&search_root)
                     .arg("--max-depth").arg(max_depth)
                     .arg("--color").arg("never")
                     .output()
@@ -66,16 +66,33 @@ fn spawn_search(
 
         if cancel.load(Ordering::Relaxed) { return; }
 
-        if let Ok(out) = output {
-            let result = String::from_utf8_lossy(&out.stdout);
-            let paths: Vec<std::path::PathBuf> = result
-                .lines()
-                .filter(|l| !l.is_empty())
-                .take(300) // cap at 300 results to keep UI fast
-                .map(std::path::PathBuf::from)
-                .collect();
-            let _ = tx.send(paths);
-        }
+        let raw_output = match fd_output {
+            Ok(out) if out.status.success() || !out.stdout.is_empty() => out.stdout,
+            _ => {
+                // fd not installed — fall back to system find
+                let depth = if global { "8" } else { "5" };
+                let fallback = std::process::Command::new("find")
+                    .arg(&search_root)
+                    .arg("-maxdepth").arg(depth)
+                    .arg("-iname").arg(format!("*{}*", query))
+                    .output();
+                match fallback {
+                    Ok(out) => out.stdout,
+                    Err(_) => return,
+                }
+            }
+        };
+
+        if cancel.load(Ordering::Relaxed) { return; }
+
+        let result = String::from_utf8_lossy(&raw_output);
+        let paths: Vec<std::path::PathBuf> = result
+            .lines()
+            .filter(|l| !l.is_empty())
+            .take(300)
+            .map(std::path::PathBuf::from)
+            .collect();
+        let _ = tx.send(paths);
     });
 }
 
