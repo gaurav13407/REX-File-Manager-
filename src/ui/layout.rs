@@ -35,7 +35,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .left
         .entries
         .iter()
-        .map(|p| {
+        .zip(app.left.entry_is_dir.iter())
+        .map(|(p, &is_dir_cached)| {
             let is_parent = app
                 .left
                 .path
@@ -50,7 +51,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 p.file_name().unwrap().to_string_lossy()
             };
 
-            let icon = if is_parent { "⬆️" } else { get_icon(p) };
+            // Use cached is_dir — zero stat syscalls
+            let icon = if is_parent {
+                "⬆️"
+            } else {
+                get_icon_cached(p, is_dir_cached)
+            };
             let is_selected = app.selected.contains(p);
             let is_clipboard = app.clipboard.as_ref().map_or(false, |c| c == p);
 
@@ -61,7 +67,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             } else if is_clipboard {
                 "[y] "
             } else {
-                "[ ] "
+                ""
             };
             let item = format!("{}{} {}", prefix, icon, name);
 
@@ -71,7 +77,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )
-            } else if p.is_dir() {
+            } else if is_dir_cached {
                 ListItem::new(item).style(Style::default().fg(Color::Cyan))
             } else {
                 ListItem::new(item)
@@ -234,6 +240,33 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
         y,
         width: popup_width.min(r.width),
         height: height.min(r.height),
+    }
+}
+
+/// Icon lookup using a pre-cached is_dir value — zero filesystem calls.
+pub fn get_icon_cached(path: &std::path::Path, is_dir: bool) -> &'static str {
+    if is_dir {
+        return "📁";
+    }
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .as_deref()
+    {
+        Some("rs") => "🦀",
+        Some("toml") | Some("yaml") | Some("yml") | Some("json") => "⚙️",
+        Some("md") | Some("txt") => "📄",
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("svg") => "🖼️",
+        Some("mp4") | Some("mkv") | Some("avi") | Some("mov") => "🎬",
+        Some("mp3") | Some("wav") | Some("flac") => "🎵",
+        Some("zip") | Some("tar") | Some("gz") | Some("xz") | Some("7z") => "📦",
+        Some("sh") | Some("bash") | Some("zsh") => "🐚",
+        Some("py") => "🐍",
+        Some("js") | Some("ts") => "📜",
+        Some("html") | Some("htm") => "🌐",
+        Some("css") => "🎨",
+        _ => "📄",
     }
 }
 

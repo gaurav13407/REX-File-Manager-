@@ -77,19 +77,20 @@ fn main() -> Result<(), io::Error> {
 
             current_watch_path = app.left.path.clone();
         }
-        // Debounced preview: only refresh when cursor changed AND no key is queued.
-        let cursor_changed = app.preview_cached_cursor != Some(app.left.cursor);
-        if cursor_changed && !event::poll(std::time::Duration::ZERO)? {
-            app.refresh_preview();
-            needs_draw = true;
-        }
-
-        // Only call terminal.draw() when something actually changed.
+        // Draw FIRST — instant visual feedback regardless of preview state.
         if needs_draw {
             terminal.draw(|frame| {
                 ui::layout::draw(frame, &mut app);
             })?;
             needs_draw = false;
+        }
+
+        // Debounced preview AFTER draw: only read disk when cursor changed
+        // and no key is queued. Screen is already updated at this point.
+        let cursor_changed = app.preview_cached_cursor != Some(app.left.cursor);
+        if cursor_changed && !event::poll(std::time::Duration::ZERO)? {
+            app.refresh_preview();
+            needs_draw = true; // redraw to show fresh preview
         }
 
         if rx.try_recv().is_ok() {
