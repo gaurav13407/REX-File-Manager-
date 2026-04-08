@@ -1,7 +1,14 @@
 use crate::fs::navigator::Navigator;
+use std::path::PathBuf;
 pub enum Pane {
     Left,
     Right,
+}
+
+pub enum Operation{
+    Delete{original:PathBuf,trash:PathBuf},
+    Copy{from:PathBuf,to:PathBuf},
+    Move{from:PathBuf,to:PathBuf},
 }
 
 pub struct App {
@@ -13,6 +20,11 @@ pub struct App {
     pub preview_scroll: usize,
     pub preview_cursor: usize,
     pub visible_height: usize,
+    pub clipboard: Option<PathBuf>,
+    pub cut_mode: bool,
+    pub confirm_delete: bool,
+    pub history: Vec<Operation>,
+    pub status_msg: Option<String>,
 }
 
 impl App {
@@ -28,6 +40,11 @@ impl App {
             preview_content: Vec::new(),
             preview_cursor: 0,
             visible_height: 0,
+            clipboard: None,
+            cut_mode: false,
+            confirm_delete: false,
+            history: Vec::new(),
+            status_msg: None,
         }
     }
 

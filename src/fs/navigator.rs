@@ -53,10 +53,15 @@ impl Navigator {
                 //same type->sort by name
                 _ => a
                     .file_name()
-                    .unwrap()
+                    .unwrap_or_else(|| a.as_os_str())
                     .to_string_lossy()
                     .to_lowercase()
-                    .cmp(&b.file_name().unwrap().to_string_lossy().to_lowercase()),
+                    .cmp(
+                        &b.file_name()
+                            .unwrap_or_else(|| b.as_os_str())
+                            .to_string_lossy()
+                            .to_lowercase(),
+                    ),
             }
         });
 

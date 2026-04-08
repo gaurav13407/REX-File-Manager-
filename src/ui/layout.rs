@@ -1,7 +1,8 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -35,7 +36,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .entries
         .iter()
         .map(|p| {
-            let is_parent = app.left.path.parent().map_or(false, |parent| p == parent);
+            let is_parent = app.left.path.parent().map_or(false, |parent| p.as_path() == parent);
 
             let name = if is_parent {
                 p.file_name()
@@ -63,46 +64,44 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .collect();
 
     // ── Build preview items ───────────────────────────────────────────────────
-    let preview_items: Vec<ListItem> =
-        if let Some(path) = app.left.entries.get(app.left.cursor) {
-            if path.is_dir() {
-                match std::fs::read_dir(path) {
-                    Ok(read) => read
-                        .flatten()
-                        .map(|e| {
-                            let name = e.file_name().to_string_lossy().to_string();
-                            let icon = get_icon(&e.path());
-                            ListItem::new(format!("{} {}", icon, name))
-                        })
-                        .collect(),
-                    Err(_) => vec![ListItem::new("Cannot read directory")],
-                }
-            } else {
-                match std::fs::read_to_string(path) {
-                    Ok(content) => {
-                        let all_lines: Vec<&str> = content.lines().collect();
-                        let total = all_lines.len();
-
-                        // Clamp scroll/cursor every frame so a resize is
-                        // automatically corrected before we render.
-                        app.clamp_scroll(total, visible_height);
-
-                        all_lines
-                            .iter()
-                            .skip(app.preview_scroll)
-                            .take(visible_height)
-                            .map(|line| {
-                                ListItem::new(line.to_string())
-                                    .style(Style::default().fg(Color::Gray))
-                            })
-                            .collect()
-                    }
-                    Err(_) => vec![ListItem::new("Binary or unreadable file")],
-                }
+    let preview_items: Vec<ListItem> = if let Some(path) = app.left.entries.get(app.left.cursor) {
+        if path.is_dir() {
+            match std::fs::read_dir(path) {
+                Ok(read) => read
+                    .flatten()
+                    .map(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        let icon = get_icon(&e.path());
+                        ListItem::new(format!("{} {}", icon, name))
+                    })
+                    .collect(),
+                Err(_) => vec![ListItem::new("Cannot read directory")],
             }
         } else {
-            vec![ListItem::new("No file selected")]
-        };
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let all_lines: Vec<&str> = content.lines().collect();
+                    let total = all_lines.len();
+
+                    // Clamp scroll/cursor every frame so a resize is
+                    // automatically corrected before we render.
+                    app.clamp_scroll(total, visible_height);
+
+                    all_lines
+                        .iter()
+                        .skip(app.preview_scroll)
+                        .take(visible_height)
+                        .map(|line| {
+                            ListItem::new(line.to_string()).style(Style::default().fg(Color::Gray))
+                        })
+                        .collect()
+                }
+                Err(_) => vec![ListItem::new("Binary or unreadable file")],
+            }
+        }
+    } else {
+        vec![ListItem::new("No file selected")]
+    };
 
     let right_title = match app.active_pane {
         Pane::Right => "Preview *",
@@ -161,10 +160,93 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     frame.render_stateful_widget(right, panes[1], &mut right_state);
 
+    let status_text = app
+        .status_msg
+        .as_deref()
+        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  d:delete  y:copy  p:paste  u:undo");
+
+    let status_style = if app.status_msg.is_some() {
+        Style::default().bg(Color::DarkGray).fg(Color::Green)
+    } else {
+        Style::default().bg(Color::DarkGray)
+    };
+
     let status = Block::default()
-        .style(Style::default().bg(Color::DarkGray))
-        .title("rex | q = quit | Tab = switch pane");
+        .style(status_style)
+        .title(status_text);
     frame.render_widget(status, vertical[1]);
+
+    // ── Delete confirmation popup ─────────────────────────────────────────────
+    if app.confirm_delete {
+        let file_name = app
+            .left
+            .entries
+            .get(app.left.cursor)
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from("this item"));
+
+        let popup_area = centered_rect(50, 7, size);
+
+        // Clear the background behind the popup.
+        frame.render_widget(Clear, popup_area);
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  Delete  "),
+                Span::styled(
+                    &file_name,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("?"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(
+                    "  [y] ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("confirm    "),
+                Span::styled(
+                    "[n / Esc] ",
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("cancel"),
+            ]),
+            Line::from(""),
+        ];
+
+        let popup = Paragraph::new(text)
+            .block(
+                Block::default()
+                    .title(" ⚠ Confirm Delete ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Red)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(popup, popup_area);
+    }
+}
+
+/// Returns a centered `Rect` of fixed height (rows) and percentage width.
+fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
+    let popup_width = r.width * percent_x / 100;
+    let x = r.x + (r.width.saturating_sub(popup_width)) / 2;
+    let y = r.y + (r.height.saturating_sub(height)) / 2;
+    Rect {
+        x,
+        y,
+        width: popup_width.min(r.width),
+        height: height.min(r.height),
+    }
 }
 
 fn get_icon(path: &std::path::Path) -> &'static str {
