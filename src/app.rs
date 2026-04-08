@@ -1,6 +1,46 @@
 use crate::fs::navigator::Navigator;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub struct AppConfig {
+    pub open_with: HashMap<String, String>, // ext -> app name
+}
+
+pub fn config_path() -> std::path::PathBuf {
+    // 1. Next to the binary (when installed / cargo run)
+    if let Ok(exe) = std::env::current_exe() {
+        let p = exe.parent().unwrap_or(std::path::Path::new("/")).join("config.json");
+        if p.exists() { return p; }
+    }
+    // 2. Current working directory (cargo run from project root)
+    if let Ok(cwd) = std::env::current_dir() {
+        let p = cwd.join("config.json");
+        if p.exists() { return p; }
+    }
+    // 3. ~/.config/rex/config.json
+    if let Some(home) = dirs::home_dir() {
+        let p = home.join(".config").join("rex").join("config.json");
+        if p.exists() { return p; }
+    }
+    // Fallback: write to cwd
+    std::env::current_dir().unwrap_or_default().join("config.json")
+}
+
+pub fn load_config() -> AppConfig {
+    if let Ok(data) = std::fs::read_to_string(config_path()) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        AppConfig::default()
+    }
+}
+
+pub fn save_config(config: &AppConfig) {
+    if let Ok(data) = serde_json::to_string_pretty(config) {
+        let _ = std::fs::write(config_path(), data);
+    }
+}
+
 pub enum Pane {
     Left,
     Right,
@@ -8,7 +48,7 @@ pub enum Pane {
 
 pub enum Operation {
     DeleteBatch{items:Vec<(PathBuf,PathBuf)>},
-    Copy { from: PathBuf, to: PathBuf },
+    Copy { _from: PathBuf, to: PathBuf },
     Move { from: PathBuf, to: PathBuf },
 }
 
@@ -28,6 +68,12 @@ pub struct App {
     pub history: Vec<Operation>,
     pub status_msg: Option<String>,
     pub selected: HashSet<PathBuf>,
+    pub config: AppConfig,
+    pub search_mode: bool,
+    pub search_query: String,
+    pub search_results: Vec<PathBuf>,
+    pub search_cursor: usize,
+    pub global_search: bool,
 }
 
 impl App {
@@ -50,6 +96,12 @@ impl App {
             history: Vec::new(),
             status_msg: None,
             selected: HashSet::new(),
+            config: load_config(),
+            search_mode: false,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_cursor: 0,
+            global_search: false,
         }
     }
 

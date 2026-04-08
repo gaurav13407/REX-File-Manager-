@@ -85,7 +85,71 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    // ── Build preview items from cache (no disk I/O during draw) ────────────
+    // ── Right pane: search results OR preview ────────────────────────────────
+    if app.search_mode {
+        // Build search result items
+        let result_items: Vec<ListItem> = if app.search_results.is_empty() {
+            vec![ListItem::new(if app.search_query.is_empty() {
+                "Type to search…".to_string()
+            } else {
+                "No results".to_string()
+            })]
+        } else {
+            app.search_results
+                .iter()
+                .map(|p| {
+                    // Show path relative to current dir for readability
+                    let display = p.strip_prefix(&app.left.path)
+                        .unwrap_or(p)
+                        .to_string_lossy()
+                        .to_string();
+                    let is_dir = p.to_string_lossy().ends_with('/') || p.is_dir();
+                    let icon = if is_dir { "/" } else { "~" };
+                    ListItem::new(format!("{} {}", icon, display))
+                })
+                .collect()
+        };
+
+        let search_block = Block::default()
+            .title(format!(" {} Search: {}█ ", if app.global_search { "🌐 Global" } else { "📁 Local" }, app.search_query))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let search_list = List::new(result_items)
+            .block(search_block)
+            .highlight_style(
+                Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD),
+            );
+
+        let left_block = Block::default()
+            .title(left_title)
+            .borders(Borders::ALL)
+            .border_style(Style::default()); // dim left when searching
+
+        let left = List::new(left_items).block(left_block).highlight_style(
+            Style::default().bg(Color::Blue).fg(Color::Black).add_modifier(Modifier::BOLD),
+        );
+        let mut left_state = ListState::default();
+        left_state.select(Some(app.left.cursor));
+        frame.render_stateful_widget(left, panes[0], &mut left_state);
+
+        let mut search_state = ListState::default();
+        if !app.search_results.is_empty() {
+            search_state.select(Some(app.search_cursor));
+        }
+        frame.render_stateful_widget(search_list, panes[1], &mut search_state);
+
+        let status_bar = Block::default()
+            .style(Style::default().bg(Color::Cyan).fg(Color::Black))
+            .title(format!(" {} {} | j/k:nav  Enter:goto  Esc/q:cancel ",
+                if app.global_search { "g (global /):" } else { "/ (local):" },
+                app.search_query
+            ));
+        frame.render_widget(status_bar, vertical[1]);
+        return;
+    }
+
+    // ── Normal mode: preview ─────────────────────────────────────────────────
     let preview_items: Vec<ListItem> = if app.preview_content.is_empty() {
         vec![ListItem::new("No preview")]
     } else {
@@ -159,7 +223,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let status_text = app
         .status_msg
         .as_deref()
-        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  d:delete  y:copy  p:paste  u:undo");
+        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  d:delete  y:copy  p:paste  u:undo  /:search");
 
     let status_style = if app.status_msg.is_some() {
         Style::default().bg(Color::DarkGray).fg(Color::Green)

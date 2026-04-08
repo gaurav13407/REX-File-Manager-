@@ -13,3 +13,4 @@ tokio={version="1",features=["full"]}
 walkdir="2"
 notify = "6"
 dirs = "5"
+serde_json = "1"

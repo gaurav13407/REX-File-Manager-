@@ -14,7 +14,7 @@ use crossterm::{
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::sync::mpsc::channel;
-use std::{io, path::PathBuf};
+use std::{io};
 
 fn get_unique_path(mut dest: std::path::PathBuf) -> std::path::PathBuf {
     let mut count = 1;
@@ -37,6 +37,48 @@ fn get_unique_path(mut dest: std::path::PathBuf) -> std::path::PathBuf {
     dest
 }
 
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::mpsc as smpsc;
+
+fn spawn_search(
+    query: String,
+    search_root: std::path::PathBuf,
+    global: bool,
+    tx: smpsc::Sender<Vec<std::path::PathBuf>>,
+    cancel: Arc<AtomicBool>,
+) {
+    std::thread::spawn(move || {
+        let max_depth = if global { "8" } else { "5" };
+        let output = std::process::Command::new("fd")
+            .arg(&query)
+            .arg(&search_root)
+            .arg("--max-depth").arg(max_depth)
+            .arg("--color").arg("never")
+            .output()
+            .or_else(|_| {
+                std::process::Command::new("fdfind")
+                    .arg(&query)
+                    .arg(&search_root)
+                    .arg("--max-depth").arg(max_depth)
+                    .arg("--color").arg("never")
+                    .output()
+            });
+
+        if cancel.load(Ordering::Relaxed) { return; }
+
+        if let Ok(out) = output {
+            let result = String::from_utf8_lossy(&out.stdout);
+            let paths: Vec<std::path::PathBuf> = result
+                .lines()
+                .filter(|l| !l.is_empty())
+                .take(300) // cap at 300 results to keep UI fast
+                .map(std::path::PathBuf::from)
+                .collect();
+            let _ = tx.send(paths);
+        }
+    });
+}
+
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
@@ -46,14 +88,9 @@ fn main() -> Result<(), io::Error> {
 
     let mut app = App::new();
 
-    let (tx, rx) = channel::<notify::Result<notify::Event>>();
+    let (watcher_tx, rx) = channel();
 
-    //clone path to watch
-    let watch_path = app.left.path.clone();
-
-    let (tx, rx) = channel();
-
-    let mut watcher: RecommendedWatcher = Watcher::new(tx, notify::Config::default()).unwrap();
+    let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, notify::Config::default()).unwrap();
 
     //start watching initial path
     watcher
@@ -66,6 +103,10 @@ fn main() -> Result<(), io::Error> {
     let mut current_watch_path = app.left.path.clone();
     let mut needs_draw = true;
 
+    // Async search channel
+    let (search_tx, search_rx) = smpsc::channel::<Vec<std::path::PathBuf>>();
+    let mut search_cancel = Arc::new(AtomicBool::new(false));
+
     while !app.should_quit {
         if app.left.path != current_watch_path {
             watcher.unwatch(&current_watch_path).ok();
@@ -77,6 +118,14 @@ fn main() -> Result<(), io::Error> {
 
             current_watch_path = app.left.path.clone();
         }
+
+        // Receive async search results (non-blocking)
+        if let Ok(results) = search_rx.try_recv() {
+            app.search_results = results;
+            app.search_cursor = 0;
+            needs_draw = true;
+        }
+
         // Draw FIRST — instant visual feedback regardless of preview state.
         if needs_draw {
             terminal.draw(|frame| {
@@ -103,7 +152,11 @@ fn main() -> Result<(), io::Error> {
             needs_draw = true;
         }
         if event::poll(std::time::Duration::from_millis(16))? {
-            if let Event::Key(key) = event::read()? {
+            match event::read()? {
+                Event::Resize(_, _) => {
+                    needs_draw = true;
+                }
+                Event::Key(key) => {
                 // total_lines from cache — no disk read.
                 let total_lines = app.preview_content.len();
 
@@ -171,8 +224,151 @@ fn main() -> Result<(), io::Error> {
                     continue;
                 }
 
+                // ── Search mode: capture ALL keys before normal handling ──────
+                if app.search_mode {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            search_cancel.store(true, Ordering::Relaxed);
+                            app.search_mode = false;
+                            app.search_query.clear();
+                            app.search_results.clear();
+                        }
+                        KeyCode::Enter => {
+                            if let Some(path) = app.search_results.get(app.search_cursor).cloned() {
+                                let target_dir = if path.is_dir() { path.clone() }
+                                    else { path.parent().unwrap_or(&path).to_path_buf() };
+                                app.left.path = target_dir;
+                                app.left.refresh();
+                                app.refresh_preview();
+                                if let Some(idx) = app.left.entries.iter().position(|e| e == &path) {
+                                    app.left.cursor = idx;
+                                }
+                                search_cancel.store(true, Ordering::Relaxed);
+                                app.search_mode = false;
+                                app.search_query.clear();
+                                app.search_results.clear();
+                            }
+                        }
+                        KeyCode::Char('j') => {
+                            if app.search_cursor + 1 < app.search_results.len() {
+                                app.search_cursor += 1;
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.search_cursor > 0 { app.search_cursor -= 1; }
+                        }
+                        KeyCode::Backspace => {
+                            app.search_query.pop();
+                            app.search_results.clear();
+                            if !app.search_query.is_empty() {
+                                search_cancel.store(true, Ordering::Relaxed);
+                                search_cancel = Arc::new(AtomicBool::new(false));
+                                let root = if app.global_search { std::path::PathBuf::from("/") } else { app.left.path.clone() };
+                                spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel));
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            app.search_query.push(c);
+                            search_cancel.store(true, Ordering::Relaxed);
+                            search_cancel = Arc::new(AtomicBool::new(false));
+                            let root = if app.global_search { std::path::PathBuf::from("/") } else { app.left.path.clone() };
+                            spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel));
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue; // skip all normal key handling below
+                }
+
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
+
+                    // / — local search (current directory)
+                    KeyCode::Char('/') => {
+                        app.search_mode = true;
+                        app.global_search = false;
+                        app.search_query.clear();
+                        app.search_results.clear();
+                        app.search_cursor = 0;
+                    }
+
+                    // g — global search (entire filesystem from /)
+                    KeyCode::Char('g') => {
+                        app.search_mode = true;
+                        app.global_search = true;
+                        app.search_query.clear();
+                        app.search_results.clear();
+                        app.search_cursor = 0;
+                    }
+
+                    // o — open file with configured app or xdg-open
+                    KeyCode::Char('o') => {
+                        if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
+                            if path.is_dir() {
+                                // navigate into directory instead
+                                app.left.enter();
+                                app.left.refresh();
+                                app.refresh_preview();
+                            } else {
+                                let ext = path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let app_name = app.config.open_with
+                                    .get(&ext)
+                                    .cloned()
+                                    .unwrap_or_else(|| "xdg-open".to_string());
+
+                                // Disable raw mode so terminal apps (nvim, etc.) get a proper tty
+                                disable_raw_mode().ok();
+                                execute!(io::stdout(), LeaveAlternateScreen).ok();
+
+                                let _ = std::process::Command::new(&app_name)
+                                    .arg(&path)
+                                    .status();
+
+                                execute!(io::stdout(), EnterAlternateScreen).ok();
+                                enable_raw_mode().ok();
+                                terminal.clear()?;
+
+                                app.status_msg = Some(format!(
+                                    "Opened {} with {}",
+                                    path.file_name().unwrap_or_default().to_string_lossy(),
+                                    app_name
+                                ));
+                            }
+                        }
+                    }
+
+                    // O — set custom app for current file's extension
+                    KeyCode::Char('O') => {
+                        if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
+                            let ext = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            disable_raw_mode().ok();
+                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+
+                            println!("\nSet app for .{} files (e.g. nvim, code, vlc): ", ext);
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input).ok();
+
+                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                            enable_raw_mode().ok();
+                            terminal.clear()?;
+
+                            let app_name = input.trim().to_string();
+                            if !app_name.is_empty() {
+                                app.config.open_with.insert(ext.clone(), app_name.clone());
+                                app::save_config(&app.config);
+                                app.status_msg = Some(format!("Saved: .{} → {}", ext, app_name));
+                            }
+                        }
+                    }
 
                     KeyCode::Tab => {
                         app.active_pane = match app.active_pane {
@@ -181,29 +377,39 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
 
-                    KeyCode::Char('j') => match app.active_pane {
-                        Pane::Left => {
-                            app.left.move_down();
-                        }
-                        Pane::Right => {
-                            if total_lines > 0 && app.preview_cursor < total_lines - 1 {
-                                app.preview_cursor += 1;
+                    KeyCode::Char('j') => {
+                        if app.search_mode {
+                            if app.search_cursor + 1 < app.search_results.len() {
+                                app.search_cursor += 1;
                             }
-                            let vh = app.visible_height;
-                            app.clamp_scroll(total_lines, vh);
+                        } else {
+                            match app.active_pane {
+                                Pane::Left => { app.left.move_down(); }
+                                Pane::Right => {
+                                    if total_lines > 0 && app.preview_cursor < total_lines - 1 {
+                                        app.preview_cursor += 1;
+                                    }
+                                    let vh = app.visible_height;
+                                    app.clamp_scroll(total_lines, vh);
+                                }
+                            }
                         }
-                    },
+                    }
 
-                    KeyCode::Char('k') => match app.active_pane {
-                        Pane::Left => {
-                            app.left.move_up();
+                    KeyCode::Char('k') => {
+                        if app.search_mode {
+                            if app.search_cursor > 0 { app.search_cursor -= 1; }
+                        } else {
+                            match app.active_pane {
+                                Pane::Left => { app.left.move_up(); }
+                                Pane::Right => {
+                                    app.preview_cursor = app.preview_cursor.saturating_sub(1);
+                                    let vh = app.visible_height;
+                                    app.clamp_scroll(total_lines, vh);
+                                }
+                            }
                         }
-                        Pane::Right => {
-                            app.preview_cursor = app.preview_cursor.saturating_sub(1);
-                            let vh = app.visible_height;
-                            app.clamp_scroll(total_lines, vh);
-                        }
-                    },
+                    }
 
                     KeyCode::Char('l') => {
                         if !app.preview_mode {
@@ -226,7 +432,26 @@ fn main() -> Result<(), io::Error> {
                     }
 
                     KeyCode::Enter => {
-                        if !app.preview_mode {
+                        if app.search_mode {
+                            // Jump to result: navigate to its parent directory
+                            if let Some(path) = app.search_results.get(app.search_cursor).cloned() {
+                                let target_dir = if path.is_dir() {
+                                    path.clone()
+                                } else {
+                                    path.parent().unwrap_or(&path).to_path_buf()
+                                };
+                                app.left.path = target_dir;
+                                app.left.refresh();
+                                app.refresh_preview();
+                                // Position cursor on matched file
+                                if let Some(idx) = app.left.entries.iter().position(|e| e == &path) {
+                                    app.left.cursor = idx;
+                                }
+                                app.search_mode = false;
+                                app.search_query.clear();
+                                app.search_results.clear();
+                            }
+                        } else if !app.preview_mode {
                             if let Pane::Left = app.active_pane {
                                 app.left.enter();
                                 app.left.refresh();
@@ -319,7 +544,7 @@ fn main() -> Result<(), io::Error> {
                                     match std::fs::copy(&src, &dest) {
                                         Ok(_) => {
                                             app.history.push(Operation::Copy {
-                                                from: src.clone(),
+                                                _from: src.clone(),
                                                 to: dest.clone(),
                                             });
                                         }
@@ -359,7 +584,7 @@ fn main() -> Result<(), io::Error> {
                                 match std::fs::copy(&src, &dest) {
                                     Ok(_) => {
                                         app.history.push(Operation::Copy {
-                                            from: src.clone(),
+                                            _from: src.clone(),
                                             to: dest.clone(),
                                         });
                                     }
@@ -427,15 +652,23 @@ fn main() -> Result<(), io::Error> {
                     }
 
                     KeyCode::Esc => {
-                        app.selected.clear();
-                        app.clipboard = None;
-                        app.cut_mode = false;
+                        if app.search_mode {
+                            app.search_mode = false;
+                            app.search_query.clear();
+                            app.search_results.clear();
+                        } else {
+                            app.selected.clear();
+                            app.clipboard = None;
+                            app.cut_mode = false;
+                        }
                     }
 
                     _ => {}
                 }
                 needs_draw = true;
-            }
+                } // end Event::Key
+                _ => {} // ignore mouse, focus, paste events
+            } // end match event::read()
         }
     }
 
