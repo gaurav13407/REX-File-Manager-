@@ -23,8 +23,12 @@ A fast, keyboard-driven TUI file manager written in Rust using [ratatui](https:/
 
 ```bash
 # Clone
-git clone https://github.com/yourusername/rex.git
+git clone https://github.com/gaurav13407/REX-File-Manager
 cd rex
+
+## Install
+
+cargo install rex-fm 
 
 # Install fd (optional but recommended — faster search)
 sudo apt install fd-find   # Ubuntu/Debian
