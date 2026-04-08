@@ -1,16 +1,27 @@
 [package]
-name = "rex"
+name = "rex-fm"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+description = "A fast terminal file manager with undo, search, and multi-select"
+license = "MIT"
+repository = "https://github.com/gaurav13407/REX-File-Manager-"
+readme = "README.md"
+keywords = ["file-manager", "tui", "terminal"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rex"
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 2
 
 [dependencies]
-ratatui="0.29"
-crossterm="0.28"
-serde={version="1",features=["derive"]}
-toml="0.8"
-sysinfo="0.33"
-tokio={version="1",features=["full"]}
-walkdir="2"
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
 notify = "6"
 dirs = "5"
-serde_json = "1"

@@ -292,6 +292,81 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
         frame.render_widget(popup, popup_area);
     }
+
+    // ── Open-with popup ───────────────────────────────────────────────────────
+    if app.open_with_mode {
+        let height = (app.open_with_options.len() as u16 + 4).min(size.height - 4);
+        let area = centered_rect(50, height, size);
+
+        let items: Vec<ListItem> = app.open_with_options.iter().enumerate().map(|(i, opt)| {
+            if i == app.open_with_cursor {
+                ListItem::new(format!("  {}", opt))
+                    .style(Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
+            } else {
+                ListItem::new(format!("  {}", opt))
+            }
+        }).collect();
+
+        let popup = List::new(items).block(
+            Block::default()
+                .title(" Open With — j/k:select  Enter:open  Esc:cancel ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(popup, area);
+    }
+
+    // ── Help popup (?): all keybinds ─────────────────────────────────────────
+    if app.show_help {
+        let help_text = vec![
+            Line::from(Span::styled("  Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  j / k        Move down / up"),
+            Line::from("  h            Go to parent directory"),
+            Line::from("  l / Enter    Enter directory"),
+            Line::from("  Tab          Switch pane (file list ↔ preview)"),
+            Line::from("  gg           Go to top   (in preview pane)"),
+            Line::from(""),
+            Line::from(Span::styled("  File Operations", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  o            Open file (uses config.json app)"),
+            Line::from("  O            Open With popup (choose + save default)"),
+            Line::from("  Space        Toggle select file"),
+            Line::from("  A            Select all files"),
+            Line::from("  Esc          Clear selection / cancel"),
+            Line::from("  y            Copy  |  x  Cut  |  p  Paste"),
+            Line::from("  d            Delete (trash)  — confirm with y"),
+            Line::from("  u            Undo last operation"),
+            Line::from(""),
+            Line::from(Span::styled("  Search", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  /            Local search (current directory)"),
+            Line::from("  g            Global search (from /)"),
+            Line::from("  j / k        Navigate results"),
+            Line::from("  Enter        Jump to result"),
+            Line::from("  Esc / q      Exit search"),
+            Line::from(""),
+            Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  ?            Toggle this help"),
+            Line::from("  q            Quit"),
+            Line::from(""),
+            Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),
+        ];
+
+        let height = (help_text.len() as u16 + 2).min(size.height - 2);
+        let help_area = centered_rect(62, height, size);
+
+        let help_popup = Paragraph::new(help_text)
+            .block(
+                Block::default()
+                    .title(" ❓ rex — Help ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(Clear, help_area);
+        frame.render_widget(help_popup, help_area);
+    }
 }
 
 /// Returns a centered `Rect` of fixed height (rows) and percentage width.

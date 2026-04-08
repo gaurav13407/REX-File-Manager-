@@ -74,6 +74,10 @@ pub struct App {
     pub search_results: Vec<PathBuf>,
     pub search_cursor: usize,
     pub global_search: bool,
+    pub open_with_mode: bool,
+    pub open_with_options: Vec<String>,
+    pub open_with_cursor: usize,
+    pub show_help: bool,
 }
 
 impl App {
@@ -102,6 +106,10 @@ impl App {
             search_results: Vec::new(),
             search_cursor: 0,
             global_search: false,
+            open_with_mode: false,
+            open_with_options: Vec::new(),
+            open_with_cursor: 0,
+            show_help: false,
         }
     }
 

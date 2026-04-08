@@ -280,8 +280,68 @@ fn main() -> Result<(), io::Error> {
                     continue; // skip all normal key handling below
                 }
 
+                // ── Help popup: Esc closes ───────────────────────────────────
+                if app.show_help {
+                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+                        app.show_help = false;
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
+                // ── Open-with popup: capture keys ───────────────────────────
+                if app.open_with_mode {
+                    let path = app.left.entries.get(app.left.cursor).cloned();
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.open_with_mode = false;
+                        }
+                        KeyCode::Char('j') => {
+                            if app.open_with_cursor + 1 < app.open_with_options.len() {
+                                app.open_with_cursor += 1;
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.open_with_cursor > 0 { app.open_with_cursor -= 1; }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(path) = path {
+                                let raw = app.open_with_options[app.open_with_cursor].clone();
+                                // Strip "★ " prefix and " (configured)" suffix
+                                let app_name = raw
+                                    .trim_start_matches("★ ")
+                                    .split(" (configured)")
+                                    .next()
+                                    .unwrap_or(&raw)
+                                    .trim()
+                                    .to_string();
+
+                                // Save as new default for this extension
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+                                app.config.open_with.insert(ext.clone(), app_name.clone());
+                                app::save_config(&app.config);
+
+                                // Open the file
+                                disable_raw_mode().ok();
+                                execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                let _ = std::process::Command::new(&app_name).arg(&path).status();
+                                execute!(io::stdout(), EnterAlternateScreen).ok();
+                                enable_raw_mode().ok();
+                                terminal.clear()?;
+
+                                app.status_msg = Some(format!("Opened with {} (saved as default)", app_name));
+                                app.open_with_mode = false;
+                            }
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
+                    KeyCode::Char('?') => { app.show_help = true; }
 
                     // / — local search (current directory)
                     KeyCode::Char('/') => {
@@ -341,31 +401,36 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
 
-                    // O — set custom app for current file's extension
+                    // O — show open-with popup
                     KeyCode::Char('O') => {
                         if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("")
-                                .to_string();
+                            if !path.is_dir() {
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
 
-                            disable_raw_mode().ok();
-                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                // Build option list — configured app first, then common apps
+                                let mut opts: Vec<String> = Vec::new();
+                                if let Some(configured) = app.config.open_with.get(&ext) {
+                                    opts.push(format!("★ {} (configured)", configured));
+                                }
+                                // Common apps grouped by type
+                                let ext_lc = ext.to_lowercase();
+                                if ["rs","py","js","ts","c","cpp","h","toml","json","md","yaml","yml","sh","txt","html","css","lock"].contains(&ext_lc.as_str()) {
+                                    for a in &["nvim", "vim", "nano", "code", "gedit"] { opts.push(a.to_string()); }
+                                } else if ["png","jpg","jpeg","gif","bmp","webp","svg"].contains(&ext_lc.as_str()) {
+                                    for a in &["eog", "feh", "gimp", "inkscape"] { opts.push(a.to_string()); }
+                                } else if ["mp4","mkv","avi","mov","webm","mp3","wav","flac","ogg","aac"].contains(&ext_lc.as_str()) {
+                                    for a in &["vlc", "mpv", "rhythmbox"] { opts.push(a.to_string()); }
+                                } else if ["pdf","doc","docx","odt","xls","xlsx","ppt","pptx"].contains(&ext_lc.as_str()) {
+                                    for a in &["libreoffice", "evince", "okular"] { opts.push(a.to_string()); }
+                                }
+                                // Always add fallbacks
+                                for a in &["xdg-open", "nvim"] {
+                                    if !opts.iter().any(|o| o == a) { opts.push(a.to_string()); }
+                                }
 
-                            println!("\nSet app for .{} files (e.g. nvim, code, vlc): ", ext);
-                            let mut input = String::new();
-                            std::io::stdin().read_line(&mut input).ok();
-
-                            execute!(io::stdout(), EnterAlternateScreen).ok();
-                            enable_raw_mode().ok();
-                            terminal.clear()?;
-
-                            let app_name = input.trim().to_string();
-                            if !app_name.is_empty() {
-                                app.config.open_with.insert(ext.clone(), app_name.clone());
-                                app::save_config(&app.config);
-                                app.status_msg = Some(format!("Saved: .{} → {}", ext, app_name));
+                                app.open_with_options = opts;
+                                app.open_with_cursor = 0;
+                                app.open_with_mode = true;
                             }
                         }
                     }
