@@ -5,7 +5,7 @@ mod utils;
 
 use utils::trash::move_to_trash;
 
-use app::{App, Pane,Operation};
+use app::{App, Operation, Pane};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -13,18 +13,14 @@ use crossterm::{
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
 use std::sync::mpsc::channel;
+use std::{io, path::PathBuf};
 
 fn get_unique_path(mut dest: std::path::PathBuf) -> std::path::PathBuf {
     let mut count = 1;
 
     while dest.exists() {
-        let file_stem = dest
-            .file_stem()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let file_stem = dest.file_stem().unwrap().to_string_lossy().to_string();
 
         let extension = dest.extension().map(|e| e.to_string_lossy());
 
@@ -40,7 +36,6 @@ fn get_unique_path(mut dest: std::path::PathBuf) -> std::path::PathBuf {
 
     dest
 }
-
 
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
@@ -65,7 +60,11 @@ fn main() -> Result<(), io::Error> {
         .watch(&app.left.path, RecursiveMode::NonRecursive)
         .unwrap();
 
+    // Initial preview load
+    app.refresh_preview();
+
     let mut current_watch_path = app.left.path.clone();
+    let mut needs_draw = true;
 
     while !app.should_quit {
         if app.left.path != current_watch_path {
@@ -78,9 +77,20 @@ fn main() -> Result<(), io::Error> {
 
             current_watch_path = app.left.path.clone();
         }
-        terminal.draw(|frame| {
-            ui::layout::draw(frame, &mut app);
-        })?;
+        // Debounced preview: only refresh when cursor changed AND no key is queued.
+        let cursor_changed = app.preview_cached_cursor != Some(app.left.cursor);
+        if cursor_changed && !event::poll(std::time::Duration::ZERO)? {
+            app.refresh_preview();
+            needs_draw = true;
+        }
+
+        // Only call terminal.draw() when something actually changed.
+        if needs_draw {
+            terminal.draw(|frame| {
+                ui::layout::draw(frame, &mut app);
+            })?;
+            needs_draw = false;
+        }
 
         if rx.try_recv().is_ok() {
             app.left.refresh();
@@ -89,18 +99,12 @@ fn main() -> Result<(), io::Error> {
             } else {
                 app.left.cursor = 0;
             }
+            needs_draw = true;
         }
-        if event::poll(std::time::Duration::from_millis(50))? {
+        if event::poll(std::time::Duration::from_millis(16))? {
             if let Event::Key(key) = event::read()? {
-                // Compute total_lines once per event for the currently previewed file.
-                let total_lines = app
-                    .left
-                    .entries
-                    .get(app.left.cursor)
-                    .filter(|p| p.is_file())
-                    .and_then(|p| std::fs::read_to_string(p).ok())
-                    .map(|c| c.lines().count())
-                    .unwrap_or(0);
+                // total_lines from cache — no disk read.
+                let total_lines = app.preview_content.len();
 
                 // Clear any previous status message on the next keypress.
                 app.status_msg = None;
@@ -109,39 +113,49 @@ fn main() -> Result<(), io::Error> {
                 if app.confirm_delete {
                     match key.code {
                         KeyCode::Char('y') => {
-                            if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
-                                let is_parent = app
-                                    .left
-                                    .path
-                                    .parent()
-                                    .map_or(false, |parent| path == parent);
+                            let mut batch: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
 
-                                if is_parent {
-                                    eprintln!("Cannot trash parent directory");
-                                } else {
-                                    // Compute where it will land before moving.
+                            if !app.selected.is_empty() {
+                                for path in app.selected.clone() {
                                     let trash_dest = {
                                         let trash_dir = utils::trash::get_trash_dir();
-                                        utils::trash::unique_dest_pub(trash_dir.join(
-                                            path.file_name().unwrap(),
-                                        ))
+                                        utils::trash::unique_dest_pub(
+                                            trash_dir.join(path.file_name().unwrap()),
+                                        )
                                     };
-                                    match move_to_trash(&path) {
-                                        Ok(()) => {
-                                            app.history.push(app::Operation::Delete {
-                                                original: path.clone(),
-                                                trash: trash_dest,
-                                            });
-                                            app.left.refresh();
-                                            if !app.left.entries.is_empty() {
-                                                app.left.cursor =
-                                                    app.left.cursor.min(app.left.entries.len() - 1);
-                                            } else {
-                                                app.left.cursor = 0;
-                                            }
-                                        }
-                                        Err(e) => eprintln!("Trash failed: {}", e),
+                                    if move_to_trash(&path).is_ok() {
+                                        batch.push((path, trash_dest));
                                     }
+                                }
+                                app.selected.clear();
+                            } else if let Some(path) =
+                                app.left.entries.get(app.left.cursor).cloned()
+                            {
+                                let is_parent = app.left.path.parent()
+                                    .map_or(false, |parent| path.as_path() == parent);
+                                if !is_parent {
+                                    let trash_dest = {
+                                        let trash_dir = utils::trash::get_trash_dir();
+                                        utils::trash::unique_dest_pub(
+                                            trash_dir.join(path.file_name().unwrap()),
+                                        )
+                                    };
+                                    if move_to_trash(&path).is_ok() {
+                                        batch.push((path, trash_dest));
+                                    }
+                                }
+                            }
+
+                            if !batch.is_empty() {
+                                let count = batch.len();
+                                app.history.push(app::Operation::DeleteBatch { items: batch });
+                                app.status_msg = Some(format!("Trashed {} item(s)", count));
+                                app.left.refresh();
+                                if !app.left.entries.is_empty() {
+                                    app.left.cursor =
+                                        app.left.cursor.min(app.left.entries.len() - 1);
+                                } else {
+                                    app.left.cursor = 0;
                                 }
                             }
                             app.confirm_delete = false;
@@ -169,8 +183,6 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char('j') => match app.active_pane {
                         Pane::Left => {
                             app.left.move_down();
-                            app.preview_scroll = 0;
-                            app.preview_cursor = 0;
                         }
                         Pane::Right => {
                             if total_lines > 0 && app.preview_cursor < total_lines - 1 {
@@ -184,8 +196,6 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char('k') => match app.active_pane {
                         Pane::Left => {
                             app.left.move_up();
-                            app.preview_scroll = 0;
-                            app.preview_cursor = 0;
                         }
                         Pane::Right => {
                             app.preview_cursor = app.preview_cursor.saturating_sub(1);
@@ -199,6 +209,7 @@ fn main() -> Result<(), io::Error> {
                             if let Pane::Left = app.active_pane {
                                 app.left.enter();
                                 app.left.refresh();
+                                app.refresh_preview();
                             }
                         }
                     }
@@ -208,6 +219,7 @@ fn main() -> Result<(), io::Error> {
                             if let Pane::Left = app.active_pane {
                                 app.left.back();
                                 app.left.refresh();
+                                app.refresh_preview();
                             }
                         }
                     }
@@ -217,70 +229,146 @@ fn main() -> Result<(), io::Error> {
                             if let Pane::Left = app.active_pane {
                                 app.left.enter();
                                 app.left.refresh();
+                                app.refresh_preview();
                             }
                         }
                     }
 
-                    KeyCode::Char('y') => {
-                        if let Some(path) = app.left.entries.get(app.left.cursor) {
-                            app.clipboard = Some(path.clone());
-                            app.cut_mode = false;
-
-                        
-
-                        let name=path
-                            .file_name()
-                            .unwrap()
-                            .to_string_lossy()
-                            .to_string();
-                        app.status_msg=Some(format!("Copied:{}",name));
-                    
+                    // Space: toggle selection on current entry, advance cursor
+                    KeyCode::Char(' ') => {
+                        if let Pane::Left = app.active_pane {
+                            if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
+                                let is_parent = app.left.path.parent()
+                                    .map_or(false, |par| path.as_path() == par);
+                                if !is_parent {
+                                    if app.selected.contains(&path) {
+                                        app.selected.remove(&path);
+                                    } else {
+                                        app.selected.insert(path);
+                                    }
+                                }
+                            }
+                            app.left.move_down();
                         }
                     }
 
+                    // y: copy — operates on selection if any, else cursor
+                    KeyCode::Char('y') => {
+                        if !app.selected.is_empty() {
+                            app.clipboard = None;
+                            app.cut_mode = false;
+                            app.status_msg = Some(format!(
+                                "Yanked {} item(s) — press p to paste",
+                                app.selected.len()
+                            ));
+                        } else if let Some(path) = app.left.entries.get(app.left.cursor) {
+                            let is_parent = app.left.path.parent()
+                                .map_or(false, |par| path.as_path() == par);
+                            if !is_parent {
+                                app.clipboard = Some(path.clone());
+                                app.cut_mode = false;
+                                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                                app.status_msg = Some(format!("Yanked: {}", name));
+                            }
+                        }
+                    }
 
-                   KeyCode::Char('p') => {
-    if let Some(src) = &app.clipboard {
-        let file_name = src.file_name().unwrap();
-        let mut dest = app.left.path.clone();
-        dest.push(file_name);
+                    // x: cut — operates on selection if any, else cursor
+                    KeyCode::Char('x') => {
+                        if !app.selected.is_empty() {
+                            app.clipboard = None;
+                            app.cut_mode = true;
+                            app.status_msg = Some(format!(
+                                "Cut {} item(s) — press p to move",
+                                app.selected.len()
+                            ));
+                        } else if let Some(path) = app.left.entries.get(app.left.cursor) {
+                            let is_parent = app.left.path.parent()
+                                .map_or(false, |par| path.as_path() == par);
+                            if !is_parent {
+                                app.clipboard = Some(path.clone());
+                                app.cut_mode = true;
+                                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                                app.status_msg = Some(format!("Cut: {}", name));
+                            }
+                        }
+                    }
 
-        let dest = get_unique_path(dest);
+                    KeyCode::Char('p') => {
+                        // Multi-select: operate on all selected files
+                        if !app.selected.is_empty() {
+                            let count = app.selected.len();
+                            for src in app.selected.clone() {
+                                let file_name = src.file_name().unwrap();
+                                let mut dest = app.left.path.clone();
+                                dest.push(file_name);
+                                let dest = get_unique_path(dest);
 
-        if app.cut_mode {
-            // 🔥 MOVE
-            match std::fs::rename(src, &dest) {
-                Ok(_) => {
-                    app.history.push(Operation::Move {
-                        from: src.clone(),
-                        to: dest.clone(),
-                    });
+                                if app.cut_mode {
+                                    match std::fs::rename(&src, &dest) {
+                                        Ok(_) => {
+                                            app.history.push(Operation::Move {
+                                                from: src.clone(),
+                                                to: dest.clone(),
+                                            });
+                                        }
+                                        Err(e) => eprintln!("Move failed: {}", e),
+                                    }
+                                } else {
+                                    match std::fs::copy(&src, &dest) {
+                                        Ok(_) => {
+                                            app.history.push(Operation::Copy {
+                                                from: src.clone(),
+                                                to: dest.clone(),
+                                            });
+                                        }
+                                        Err(e) => eprintln!("Copy failed: {}", e),
+                                    }
+                                }
+                            }
 
-                    app.clipboard = None;
-                    app.cut_mode = false;
-                }
-                Err(e) => {
-                    eprintln!("Move failed: {}", e);
-                }
-            }
-        } else {
-            // 🔥 COPY
-            match std::fs::copy(src, &dest) {
-                Ok(_) => {
-                    app.history.push(Operation::Copy {
-                        from: src.clone(),
-                        to: dest.clone(),
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Copy failed: {}", e);
-                }
-            }
-        }
+                            if app.cut_mode {
+                                app.selected.clear();
+                                app.cut_mode = false;
+                            }
 
-        app.left.refresh();
-    }
-} 
+                            app.status_msg = Some(format!("Processed {} item(s)", count));
+                            app.left.refresh();
+
+                        // Fallback: single clipboard file
+                        } else if let Some(src) = app.clipboard.clone() {
+                            let file_name = src.file_name().unwrap();
+                            let mut dest = app.left.path.clone();
+                            dest.push(file_name);
+                            let dest = get_unique_path(dest);
+
+                            if app.cut_mode {
+                                match std::fs::rename(&src, &dest) {
+                                    Ok(_) => {
+                                        app.history.push(Operation::Move {
+                                            from: src.clone(),
+                                            to: dest.clone(),
+                                        });
+                                        app.clipboard = None;
+                                        app.cut_mode = false;
+                                    }
+                                    Err(e) => eprintln!("Move failed: {}", e),
+                                }
+                            } else {
+                                match std::fs::copy(&src, &dest) {
+                                    Ok(_) => {
+                                        app.history.push(Operation::Copy {
+                                            from: src.clone(),
+                                            to: dest.clone(),
+                                        });
+                                    }
+                                    Err(e) => eprintln!("Copy failed: {}", e),
+                                }
+                            }
+
+                            app.left.refresh();
+                        }
+                    }
 
                     KeyCode::Char('d') => {
                         app.confirm_delete = true;
@@ -289,23 +377,21 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char('u') => {
                         if let Some(op) = app.history.pop() {
                             match op {
-                                app::Operation::Delete { original, trash } => {
-                                    match std::fs::rename(&trash, &original) {
-                                        Ok(()) => {
-                                            let name = original
-                                                .file_name()
-                                                .map(|n| n.to_string_lossy().into_owned())
-                                                .unwrap_or_else(|| "file".into());
-                                            app.status_msg =
-                                                Some(format!("✔ Restored: {}", name));
-                                        }
-                                        Err(e) => {
-                                            app.status_msg =
-                                                Some(format!("✗ Restore failed: {}", e));
-                                        }
+                                app::Operation::DeleteBatch { items } => {
+                                    let count = items.len();
+                                    for (original, trash) in &items {
+                                        let _ = std::fs::rename(trash, original);
+                                    }
+                                    if count == 1 {
+                                        let name = items[0].0
+                                            .file_name()
+                                            .map(|n: &std::ffi::OsStr| n.to_string_lossy().into_owned())
+                                            .unwrap_or_else(|| "file".into());
+                                        app.status_msg = Some(format!("✔ Restored: {}", name));
+                                    } else {
+                                        app.status_msg = Some(format!("✔ Restored {} item(s)", count));
                                     }
                                 }
-
                                 app::Operation::Copy { to, .. } => {
                                     let result = if to.is_dir() {
                                         std::fs::remove_dir_all(&to)
@@ -327,23 +413,27 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
 
-                    KeyCode::Char('x')=>{
-                        if let Some(path)=app.left.entries.get(app.left.cursor){
-                            app.clipboard=Some(path.clone());
-                            app.cut_mode=true;
-
-                            let name=path.file_name()
-                                .unwrap()
-                                .to_string_lossy()
-                                .to_string();
-
-                            app.status_msg=Some(format!("Cut:{}",name));
+                    // A: select all (skip parent)
+                    KeyCode::Char('A') => {
+                        app.selected.clear();
+                        let parent = app.left.path.parent().map(|p| p.to_path_buf());
+                        for path in &app.left.entries {
+                            if parent.as_deref().map_or(false, |par| path.as_path() == par) {
+                                continue;
+                            }
+                            app.selected.insert(path.clone());
                         }
+                    }
 
+                    KeyCode::Esc => {
+                        app.selected.clear();
+                        app.clipboard = None;
+                        app.cut_mode = false;
                     }
 
                     _ => {}
                 }
+                needs_draw = true;
             }
         }
     }

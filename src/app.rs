@@ -1,19 +1,21 @@
 use crate::fs::navigator::Navigator;
+use std::collections::HashSet;
 use std::path::PathBuf;
 pub enum Pane {
     Left,
     Right,
 }
 
-pub enum Operation{
-    Delete{original:PathBuf,trash:PathBuf},
-    Copy{from:PathBuf,to:PathBuf},
-    Move{from:PathBuf,to:PathBuf},
+pub enum Operation {
+    DeleteBatch{items:Vec<(PathBuf,PathBuf)>},
+    Copy { from: PathBuf, to: PathBuf },
+    Move { from: PathBuf, to: PathBuf },
 }
 
 pub struct App {
     pub left: Navigator,
     pub preview_content: Vec<String>,
+    pub preview_cached_cursor: Option<usize>,   // cursor at last preview read
     pub active_pane: Pane,
     pub should_quit: bool,
     pub preview_mode: bool,
@@ -25,6 +27,7 @@ pub struct App {
     pub confirm_delete: bool,
     pub history: Vec<Operation>,
     pub status_msg: Option<String>,
+    pub selected: HashSet<PathBuf>,
 }
 
 impl App {
@@ -38,6 +41,7 @@ impl App {
             preview_mode: false,
             preview_scroll: 0,
             preview_content: Vec::new(),
+            preview_cached_cursor: None,
             preview_cursor: 0,
             visible_height: 0,
             clipboard: None,
@@ -45,6 +49,7 @@ impl App {
             confirm_delete: false,
             history: Vec::new(),
             status_msg: None,
+            selected: HashSet::new(),
         }
     }
 
@@ -78,6 +83,35 @@ impl App {
         let max_scroll = total_lines.saturating_sub(visible_height);
         if self.preview_scroll > max_scroll {
             self.preview_scroll = max_scroll;
+        }
+    }
+
+    /// Re-read the file/directory at the cursor and cache lines into preview_content.
+    /// Call this whenever the cursor position or directory changes.
+    pub fn refresh_preview(&mut self) {
+        self.preview_cached_cursor = Some(self.left.cursor);
+        self.preview_scroll = 0;
+        self.preview_cursor = 0;
+        self.preview_content.clear();
+
+        if let Some(path) = self.left.entries.get(self.left.cursor).cloned() {
+            if path.is_dir() {
+                if let Ok(read) = std::fs::read_dir(&path) {
+                    use crate::ui::layout::get_icon;
+                    self.preview_content = read
+                        .flatten()
+                        .map(|e| {
+                            let name = e.file_name().to_string_lossy().to_string();
+                            let icon = get_icon(&e.path());
+                            format!("{} {}", icon, name)
+                        })
+                        .collect();
+                }
+            } else if let Ok(content) = std::fs::read_to_string(&path) {
+                self.preview_content = content.lines().map(|l| l.to_string()).collect();
+            } else {
+                self.preview_content = vec!["Binary or unreadable file".to_string()];
+            }
         }
     }
 }

@@ -36,7 +36,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .entries
         .iter()
         .map(|p| {
-            let is_parent = app.left.path.parent().map_or(false, |parent| p.as_path() == parent);
+            let is_parent = app
+                .left
+                .path
+                .parent()
+                .map_or(false, |parent| p.as_path() == parent);
 
             let name = if is_parent {
                 p.file_name()
@@ -47,7 +51,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             };
 
             let icon = if is_parent { "⬆️" } else { get_icon(p) };
-            let item = format!("{} {}", icon, name);
+            let is_selected = app.selected.contains(p);
+            let is_clipboard = app.clipboard.as_ref().map_or(false, |c| c == p);
+
+            let prefix = if is_parent {
+                ""
+            } else if is_selected || (is_clipboard && app.cut_mode) {
+                "[x] "
+            } else if is_clipboard {
+                "[y] "
+            } else {
+                "[ ] "
+            };
+            let item = format!("{}{} {}", prefix, icon, name);
 
             if is_parent {
                 ListItem::new(item).style(
@@ -63,44 +79,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    // ── Build preview items ───────────────────────────────────────────────────
-    let preview_items: Vec<ListItem> = if let Some(path) = app.left.entries.get(app.left.cursor) {
-        if path.is_dir() {
-            match std::fs::read_dir(path) {
-                Ok(read) => read
-                    .flatten()
-                    .map(|e| {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        let icon = get_icon(&e.path());
-                        ListItem::new(format!("{} {}", icon, name))
-                    })
-                    .collect(),
-                Err(_) => vec![ListItem::new("Cannot read directory")],
-            }
-        } else {
-            match std::fs::read_to_string(path) {
-                Ok(content) => {
-                    let all_lines: Vec<&str> = content.lines().collect();
-                    let total = all_lines.len();
-
-                    // Clamp scroll/cursor every frame so a resize is
-                    // automatically corrected before we render.
-                    app.clamp_scroll(total, visible_height);
-
-                    all_lines
-                        .iter()
-                        .skip(app.preview_scroll)
-                        .take(visible_height)
-                        .map(|line| {
-                            ListItem::new(line.to_string()).style(Style::default().fg(Color::Gray))
-                        })
-                        .collect()
-                }
-                Err(_) => vec![ListItem::new("Binary or unreadable file")],
-            }
-        }
+    // ── Build preview items from cache (no disk I/O during draw) ────────────
+    let preview_items: Vec<ListItem> = if app.preview_content.is_empty() {
+        vec![ListItem::new("No preview")]
     } else {
-        vec![ListItem::new("No file selected")]
+        let total = app.preview_content.len();
+        app.clamp_scroll(total, visible_height);
+        app.preview_content
+            .iter()
+            .skip(app.preview_scroll)
+            .take(visible_height)
+            .map(|line| ListItem::new(line.clone()).style(Style::default().fg(Color::Gray)))
+            .collect()
     };
 
     let right_title = match app.active_pane {
@@ -171,24 +161,24 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Style::default().bg(Color::DarkGray)
     };
 
-    let status = Block::default()
-        .style(status_style)
-        .title(status_text);
+    let status = Block::default().style(status_style).title(status_text);
     frame.render_widget(status, vertical[1]);
 
     // ── Delete confirmation popup ─────────────────────────────────────────────
     if app.confirm_delete {
-        let file_name = app
-            .left
-            .entries
-            .get(app.left.cursor)
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| String::from("this item"));
+        // Show selected count or cursor file name
+        let delete_label: String = if !app.selected.is_empty() {
+            format!("{} selected item(s)", app.selected.len())
+        } else {
+            app.left
+                .entries
+                .get(app.left.cursor)
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "this item".into())
+        };
 
         let popup_area = centered_rect(50, 7, size);
-
-        // Clear the background behind the popup.
         frame.render_widget(Clear, popup_area);
 
         let text = vec![
@@ -196,7 +186,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(vec![
                 Span::raw("  Delete  "),
                 Span::styled(
-                    &file_name,
+                    &delete_label,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -214,9 +204,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 Span::raw("confirm    "),
                 Span::styled(
                     "[n / Esc] ",
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("cancel"),
             ]),
@@ -249,7 +237,7 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
     }
 }
 
-fn get_icon(path: &std::path::Path) -> &'static str {
+pub fn get_icon(path: &std::path::Path) -> &'static str {
     if path.is_dir() {
         return "📁";
     }

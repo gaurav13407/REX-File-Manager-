@@ -10,8 +10,7 @@ pub fn get_trash_dir() -> PathBuf {
 /// Returns Ok(()) on success, Err with a message on failure.
 pub fn move_to_trash(src: &Path) -> Result<(), String> {
     let trash_dir = get_trash_dir();
-    std::fs::create_dir_all(&trash_dir)
-        .map_err(|e| format!("Cannot create trash dir: {e}"))?;
+    std::fs::create_dir_all(&trash_dir).map_err(|e| format!("Cannot create trash dir: {e}"))?;
 
     let file_name = src
         .file_name()
@@ -23,8 +22,7 @@ pub fn move_to_trash(src: &Path) -> Result<(), String> {
     // If a file with the same name already exists in trash, append a counter.
     let dest = unique_dest(dest);
 
-    std::fs::rename(src, &dest)
-        .map_err(|e| format!("Move to trash failed: {e}"))
+    std::fs::rename(src, &dest).map_err(|e| format!("Move to trash failed: {e}"))
 }
 
 /// Make a destination path unique by appending `_1`, `_2`, … if needed.
