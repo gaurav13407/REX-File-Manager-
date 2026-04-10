@@ -496,39 +496,44 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── Changelog popup (U) ──────────────────────────────────────────────────
     if app.show_changelog {
         let total_lines = app.changelog_lines.len();
-        let visible_height = (size.height as usize).saturating_sub(5).min(30);
+        let visible_height = (size.height as usize).saturating_sub(5).min(40);
 
         // Clamp scroll to valid range
         let max_scroll = total_lines.saturating_sub(visible_height);
         let scroll = app.changelog_scroll.min(max_scroll);
 
-        let changelog_items: Vec<ListItem> = app.changelog_lines
+        // Build formatted lines with proper styling for wrapping
+        let changelog_content: Vec<Line> = app.changelog_lines
             .iter()
             .skip(scroll)
             .take(visible_height)
             .map(|line| {
                 let style = if line.starts_with("v") && line.contains("—") {
-                    Style::default().fg(Color::Cyan)
-                } else if line.starts_with("  ") {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else if line.starts_with("  -") || line.starts_with("  •") {
                     Style::default().fg(Color::Gray)
                 } else if line.is_empty() {
                     Style::default()
+                } else if line.starts_with("##") {
+                    Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(Color::White)
                 };
-                ListItem::new(line.clone()).style(style)
+                Line::from(Span::styled(line.clone(), style))
             })
             .collect();
 
         let height = (visible_height as u16 + 5).min(size.height - 2);
-        let changelog_area = centered_rect(60, height, size);
+        let changelog_area = centered_rect(75, height, size);
 
-        let changelog_popup = List::new(changelog_items).block(
-            Block::default()
-                .title(" 📖 Changelog — What's New ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Green)),
-        );
+        let changelog_popup = Paragraph::new(changelog_content)
+            .block(
+                Block::default()
+                    .title(" 📖 Changelog — What's New ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green)),
+            )
+            .wrap(Wrap { trim: false });
 
         frame.render_widget(Clear, changelog_area);
         frame.render_widget(changelog_popup, changelog_area);

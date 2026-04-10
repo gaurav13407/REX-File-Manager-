@@ -1,5 +1,5 @@
 # Changelog
-## v0.2.6- Current 
+## v0.2.7- Current 
 -This is the testing version of this feature you can ignore it and for more, refer to the readme or github Thanks! 
 
 ## v1.0.0 — Coming Soon 🚀
