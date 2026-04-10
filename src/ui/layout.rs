@@ -220,20 +220,47 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     frame.render_stateful_widget(right, panes[1], &mut right_state);
 
-    // ── Status bar ───────────────────────────────────────────────────────────
-    let status_text = app
-        .status_msg
-        .as_deref()
-        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  r:rename  i:info  d:delete  y:copy  p:paste  u:undo  /:search");
+    // ── Status bar (✨ update badge shown when newer version detected) ───────────
+    let default_hint = "rex | q:quit  Tab:pane  hjkl:nav  r:rename  i:info  d:delete  y:copy  p:paste  u:undo  /:search";
 
-    let status_style = if app.status_msg.is_some() {
-        Style::default().bg(Color::DarkGray).fg(Color::Green)
+    if let Some(ref ver) = app.update_available {
+        // Split the area: hint on left, badge on right
+        let badge = format!(" ★ Update available: {}  Press U to install ", ver);
+
+        // Render badge on top of the status bar in yellow
+        let hint_block = Block::default()
+            .style(if app.status_msg.is_some() {
+                Style::default().bg(Color::DarkGray).fg(Color::Green)
+            } else {
+                Style::default().bg(Color::DarkGray)
+            })
+            .title(app.status_msg.as_deref().unwrap_or(default_hint));
+        frame.render_widget(hint_block, vertical[1]);
+
+        // Overlay the badge flush-right
+        let badge_width = badge.len() as u16;
+        if badge_width < vertical[1].width {
+            let badge_rect = ratatui::layout::Rect {
+                x: vertical[1].x + vertical[1].width - badge_width,
+                y: vertical[1].y,
+                width: badge_width,
+                height: 1,
+            };
+            let badge_widget = Block::default()
+                .style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
+                .title(badge.as_str());
+            frame.render_widget(badge_widget, badge_rect);
+        }
     } else {
-        Style::default().bg(Color::DarkGray)
-    };
-
-    let status = Block::default().style(status_style).title(status_text);
-    frame.render_widget(status, vertical[1]);
+        let status_text = app.status_msg.as_deref().unwrap_or(default_hint);
+        let status_style = if app.status_msg.is_some() {
+            Style::default().bg(Color::DarkGray).fg(Color::Green)
+        } else {
+            Style::default().bg(Color::DarkGray)
+        };
+        let status = Block::default().style(status_style).title(status_text);
+        frame.render_widget(status, vertical[1]);
+    }
 
     // ── Delete confirmation popup ─────────────────────────────────────────────
     if app.confirm_delete {
@@ -292,6 +319,49 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .wrap(Wrap { trim: false });
 
         frame.render_widget(popup, popup_area);
+    }
+
+    // ── Update confirmation popup ────────────────────────────────────────────
+    if app.show_update_popup {
+        if let Some(ref ver) = app.update_available {
+            let popup_area = centered_rect(54, 9, size);
+            frame.render_widget(Clear, popup_area);
+
+            let text = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("  A new version of "),
+                    Span::styled("rex-fm", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::raw(" is available!"),
+                ]),
+                Line::from(vec![
+                    Span::raw("  Latest: "),
+                    Span::styled(ver.as_str(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw(format!("   (current: {})", env!("CARGO_PKG_VERSION"))),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("  Update now?  "),
+                    Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::raw(" yes     "),
+                    Span::styled("[N]", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::raw(" later"),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled("  Tip: press U anytime to see this again.", Style::default().fg(Color::DarkGray))),
+            ];
+
+            let popup = Paragraph::new(text)
+                .block(
+                    Block::default()
+                        .title(" 🚀 Update Available ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Green)),
+                )
+                .wrap(Wrap { trim: false });
+
+            frame.render_widget(popup, popup_area);
+        }
     }
 
     // ── Rename popup ──────────────────────────────────────────────────────────
@@ -393,6 +463,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  ?            Toggle this help"),
+            Line::from("  U            Install update (shown only when update is available)"),
             Line::from("  q            Quit"),
             Line::from(""),
             Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),

@@ -96,6 +96,27 @@ fn spawn_search(
     });
 }
 
+/// Fetch the latest published version from crates.io in a background thread.
+/// Sends Some(version_string) if the remote version is newer than the current build.
+fn spawn_update_check(tx: smpsc::Sender<String>) {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    std::thread::spawn(move || {
+        let url = "https://crates.io/api/v1/crates/rex-fm";
+        let result = ureq::get(url)
+            .set("User-Agent", &format!("rex-fm/{} update-checker", current))
+            .call();
+        if let Ok(resp) = result {
+            if let Ok(json) = resp.into_json::<serde_json::Value>() {
+                if let Some(latest) = json["crate"]["newest_version"].as_str() {
+                    if latest != current {
+                        let _ = tx.send(latest.to_string());
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
@@ -124,6 +145,10 @@ fn main() -> Result<(), io::Error> {
     let (search_tx, search_rx) = smpsc::channel::<Vec<std::path::PathBuf>>();
     let mut search_cancel = Arc::new(AtomicBool::new(false));
 
+    // Background update check — non-blocking, fires once at startup
+    let (update_tx, update_rx) = smpsc::channel::<String>();
+    spawn_update_check(update_tx);
+
     while !app.should_quit {
         if app.left.path != current_watch_path {
             watcher.unwatch(&current_watch_path).ok();
@@ -140,6 +165,13 @@ fn main() -> Result<(), io::Error> {
         if let Ok(results) = search_rx.try_recv() {
             app.search_results = results;
             app.search_cursor = 0;
+            needs_draw = true;
+        }
+
+        // Receive update notification — auto-open the popup
+        if let Ok(version) = update_rx.try_recv() {
+            app.update_available = Some(version);
+            app.show_update_popup = true; // show popup immediately
             needs_draw = true;
         }
 
@@ -382,6 +414,40 @@ fn main() -> Result<(), io::Error> {
                     continue;
                 }
 
+                // ── Update confirmation popup: Y / N ────────────────────────────
+                if app.show_update_popup {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            app.show_update_popup = false;
+                            disable_raw_mode().ok();
+                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                            eprintln!("Running: cargo install rex-fm --force");
+                            let status = std::process::Command::new("cargo")
+                                .args(["install", "rex-fm", "--force"])
+                                .status();
+                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                            enable_raw_mode().ok();
+                            terminal.clear()?;
+                            match status {
+                                Ok(s) if s.success() => {
+                                    app.status_msg = Some("✔ Updated! Restart rex to use the new version.".to_string());
+                                    app.update_available = None;
+                                }
+                                _ => {
+                                    app.status_msg = Some("✘ Update failed — run: cargo install rex-fm --force".to_string());
+                                }
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            // Dismiss popup — badge stays in status bar, U reopens later
+                            app.show_update_popup = false;
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
                 // ── Help popup: Esc closes ───────────────────────────────────
                 if app.show_help {
                     if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
@@ -445,6 +511,13 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('?') => { app.show_help = true; }
                     KeyCode::Char('i') => { app.show_info = !app.show_info; }
+
+                    // U — reopen update popup (if update is available)
+                    KeyCode::Char('U') => {
+                        if app.update_available.is_some() {
+                            app.show_update_popup = true;
+                        }
+                    }
 
                     // / — local search (current directory)
                     KeyCode::Char('/') => {

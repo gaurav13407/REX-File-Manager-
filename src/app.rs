@@ -82,6 +82,8 @@ pub struct App {
     pub input_buffer: String,
     pub rename_cursor: usize,   // caret position inside input_buffer
     pub show_info: bool,
+    pub update_available: Option<String>, // Some("0.2.0") when an update exists
+    pub show_update_popup: bool,           // show the update Y/N popup
 }
 
 impl App {
@@ -118,6 +120,8 @@ impl App {
             input_buffer: String::new(),
             rename_cursor: 0,
             show_info: false,
+            update_available: None,
+            show_update_popup: false,
         }
     }
 
