@@ -41,6 +41,21 @@ pub fn save_config(config: &AppConfig) {
     }
 }
 
+pub fn changelog_path() -> std::path::PathBuf {
+    // 1. Next to the binary (when installed / cargo run)
+    if let Ok(exe) = std::env::current_exe() {
+        let p = exe.parent().unwrap_or(std::path::Path::new("/")).join("CHANGELOG.md");
+        if p.exists() { return p; }
+    }
+    // 2. Current working directory (cargo run from project root)
+    if let Ok(cwd) = std::env::current_dir() {
+        let p = cwd.join("CHANGELOG.md");
+        if p.exists() { return p; }
+    }
+    // Fallback: try cwd
+    std::env::current_dir().unwrap_or_default().join("CHANGELOG.md")
+}
+
 pub enum Pane {
     Left,
     Right,

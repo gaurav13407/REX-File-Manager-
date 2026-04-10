@@ -139,7 +139,7 @@ fn main() -> Result<(), io::Error> {
     app.refresh_preview();
 
     // Load changelog
-    if let Ok(content) = std::fs::read_to_string("CHANGELOG.md") {
+    if let Ok(content) = std::fs::read_to_string(app::changelog_path()) {
         app.changelog_lines = content.lines().map(|s| s.to_string()).collect();
     }
 
