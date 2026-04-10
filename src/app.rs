@@ -84,6 +84,9 @@ pub struct App {
     pub show_info: bool,
     pub update_available: Option<String>, // Some("0.2.0") when an update exists
     pub show_update_popup: bool,           // show the update Y/N popup
+    pub show_changelog: bool,
+    pub changelog_lines: Vec<String>,
+    pub changelog_scroll: usize,
 }
 
 impl App {
@@ -122,6 +125,9 @@ impl App {
             show_info: false,
             update_available: None,
             show_update_popup: false,
+            show_changelog: false,
+            changelog_lines: Vec::new(),
+            changelog_scroll: 0,
         }
     }
 
