@@ -138,6 +138,11 @@ fn main() -> Result<(), io::Error> {
     // Initial preview load
     app.refresh_preview();
 
+    // Load changelog
+    if let Ok(content) = std::fs::read_to_string("CHANGELOG.md") {
+        app.changelog_lines = content.lines().map(|s| s.to_string()).collect();
+    }
+
     let mut current_watch_path = app.left.path.clone();
     let mut needs_draw = true;
 
@@ -457,6 +462,29 @@ fn main() -> Result<(), io::Error> {
                     continue;
                 }
 
+                // ── Changelog popup: Esc/q closes, j/k scrolls ──────────────
+                if app.show_changelog {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            app.show_changelog = false;
+                        }
+                        KeyCode::Char('j') => {
+                            let total_changelog_lines = app.changelog_lines.len();
+                            if app.changelog_scroll + 1 < total_changelog_lines {
+                                app.changelog_scroll += 1;
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.changelog_scroll > 0 {
+                                app.changelog_scroll -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
                 // ── Open-with popup: capture keys ───────────────────────────
                 if app.open_with_mode {
                     let path = app.left.entries.get(app.left.cursor).cloned();
@@ -512,10 +540,13 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char('?') => { app.show_help = true; }
                     KeyCode::Char('i') => { app.show_info = !app.show_info; }
 
-                    // U — reopen update popup (if update is available)
+                    // U — open changelog (or update popup if available)
                     KeyCode::Char('U') => {
                         if app.update_available.is_some() {
                             app.show_update_popup = true;
+                        } else {
+                            app.show_changelog = true;
+                            app.changelog_scroll = 0;
                         }
                     }
 

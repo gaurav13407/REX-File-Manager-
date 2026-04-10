@@ -53,6 +53,7 @@ pub enum Operation {
 }
 
 pub struct App {
+    #[allow(dead_code)]
     pub left: Navigator,
     pub preview_content: Vec<String>,
     pub preview_cached_cursor: Option<usize>,   // cursor at last preview read

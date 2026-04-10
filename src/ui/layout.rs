@@ -463,7 +463,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  ?            Toggle this help"),
-            Line::from("  U            Install update (shown only when update is available)"),
+            Line::from("  U            Changelog (what's new)"),
             Line::from("  q            Quit"),
             Line::from(""),
             Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),
@@ -483,6 +483,55 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
         frame.render_widget(Clear, help_area);
         frame.render_widget(help_popup, help_area);
+    }
+
+    // ── Changelog popup (U) ──────────────────────────────────────────────────
+    if app.show_changelog {
+        let total_lines = app.changelog_lines.len();
+        let visible_height = (size.height as usize).saturating_sub(4).min(30);
+
+        // Clamp scroll to valid range
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let scroll = app.changelog_scroll.min(max_scroll);
+
+        let changelog_items: Vec<ListItem> = app.changelog_lines
+            .iter()
+            .skip(scroll)
+            .take(visible_height)
+            .map(|line| ListItem::new(line.clone()).style(Style::default().fg(Color::Gray)))
+            .collect();
+
+        let height = (visible_height as u16 + 4).min(size.height - 2);
+        let changelog_area = centered_rect(60, height, size);
+
+        let changelog_popup = List::new(changelog_items)
+            .block(
+                Block::default()
+                    .title(" 📖 Changelog — What's New ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green)),
+            );
+
+        frame.render_widget(Clear, changelog_area);
+        frame.render_widget(changelog_popup, changelog_area);
+
+        // Show scrolling hint if there's more content
+        if total_lines > visible_height {
+            let hint_style = Style::default().fg(Color::DarkGray);
+            let scroll_hint = format!(
+                "j/k:scroll  Esc/q:close  ({}/{})",
+                scroll + 1.min(total_lines),
+                total_lines
+            );
+            let hint_area = ratatui::layout::Rect {
+                x: changelog_area.x,
+                y: changelog_area.y + changelog_area.height.saturating_sub(1),
+                width: changelog_area.width,
+                height: 1,
+            };
+            let hint = Paragraph::new(scroll_hint).style(hint_style);
+            frame.render_widget(hint, hint_area);
+        }
     }
 
     // ── File Info popup (i) ──────────────────────────────────────────────────
