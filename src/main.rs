@@ -141,6 +141,9 @@ fn main() -> Result<(), io::Error> {
     // Load changelog
     if let Ok(content) = std::fs::read_to_string(app::changelog_path()) {
         app.changelog_lines = content.lines().map(|s| s.to_string()).collect();
+    } else {
+        // Use embedded changelog as fallback (always available)
+        app.changelog_lines = app::get_default_changelog();
     }
 
     let mut current_watch_path = app.left.path.clone();

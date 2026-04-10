@@ -56,6 +56,12 @@ pub fn changelog_path() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_default().join("CHANGELOG.md")
 }
 
+/// Default changelog content (embedded in binary as fallback)
+pub fn get_default_changelog() -> Vec<String> {
+    const CHANGELOG_CONTENT: &str = include_str!("../CHANGELOG.md");
+    CHANGELOG_CONTENT.lines().map(|s| s.to_string()).collect()
+}
+
 pub enum Pane {
     Left,
     Right,
