@@ -434,7 +434,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // ── Help popup (?): all keybinds ─────────────────────────────────────────
     if app.show_help {
-        let help_text = vec![
+        let version = env!("CARGO_PKG_VERSION");
+        let mut help_text = vec![
+            Line::from(Span::styled(format!("  rex-fm v{}", version), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+            Line::from(""),
+            Line::from(Span::styled("  📢 What's New in v0.2.5", Style::default().fg(Color::Yellow))),
+            Line::from("  • Press U to see the full changelog"),
+            Line::from("  • Improved changelog viewer with scrolling"),
+            Line::from("  • Startup notification with quick tips"),
+            Line::from(""),
             Line::from(Span::styled("  Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  j / k        Move down / up"),
             Line::from("  h            Go to parent directory"),
@@ -463,7 +471,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  ?            Toggle this help"),
-            Line::from("  U            Changelog (what's new)"),
+            Line::from("  U            📖 Changelog (what's new) — Press Esc/q to close, j/k to scroll"),
             Line::from("  q            Quit"),
             Line::from(""),
             Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),
@@ -488,7 +496,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── Changelog popup (U) ──────────────────────────────────────────────────
     if app.show_changelog {
         let total_lines = app.changelog_lines.len();
-        let visible_height = (size.height as usize).saturating_sub(4).min(30);
+        let visible_height = (size.height as usize).saturating_sub(5).min(30);
 
         // Clamp scroll to valid range
         let max_scroll = total_lines.saturating_sub(visible_height);
@@ -498,40 +506,48 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .iter()
             .skip(scroll)
             .take(visible_height)
-            .map(|line| ListItem::new(line.clone()).style(Style::default().fg(Color::Gray)))
+            .map(|line| {
+                let style = if line.starts_with("v") && line.contains("—") {
+                    Style::default().fg(Color::Cyan)
+                } else if line.starts_with("  ") {
+                    Style::default().fg(Color::Gray)
+                } else if line.is_empty() {
+                    Style::default()
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                ListItem::new(line.clone()).style(style)
+            })
             .collect();
 
-        let height = (visible_height as u16 + 4).min(size.height - 2);
+        let height = (visible_height as u16 + 5).min(size.height - 2);
         let changelog_area = centered_rect(60, height, size);
 
-        let changelog_popup = List::new(changelog_items)
-            .block(
-                Block::default()
-                    .title(" 📖 Changelog — What's New ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green)),
-            );
+        let changelog_popup = List::new(changelog_items).block(
+            Block::default()
+                .title(" 📖 Changelog — What's New ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green)),
+        );
 
         frame.render_widget(Clear, changelog_area);
         frame.render_widget(changelog_popup, changelog_area);
 
-        // Show scrolling hint if there's more content
-        if total_lines > visible_height {
-            let hint_style = Style::default().fg(Color::DarkGray);
-            let scroll_hint = format!(
-                "j/k:scroll  Esc/q:close  ({}/{})",
-                scroll + 1.min(total_lines),
-                total_lines
-            );
-            let hint_area = ratatui::layout::Rect {
-                x: changelog_area.x,
-                y: changelog_area.y + changelog_area.height.saturating_sub(1),
-                width: changelog_area.width,
-                height: 1,
-            };
-            let hint = Paragraph::new(scroll_hint).style(hint_style);
-            frame.render_widget(hint, hint_area);
-        }
+        // Always show help text at bottom of popup
+        let hint_style = Style::default().fg(Color::DarkGray);
+        let scroll_hint = if total_lines > visible_height {
+            format!("j/k:scroll  Esc/q:close  ({}/{})", scroll + 1, total_lines)
+        } else {
+            "Esc/q:close".to_string()
+        };
+        let hint_area = ratatui::layout::Rect {
+            x: changelog_area.x,
+            y: changelog_area.y + changelog_area.height.saturating_sub(1),
+            width: changelog_area.width,
+            height: 1,
+        };
+        let hint = Paragraph::new(scroll_hint).style(hint_style);
+        frame.render_widget(hint, hint_area);
     }
 
     // ── File Info popup (i) ──────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 use crate::fs::navigator::Navigator;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
@@ -58,8 +59,49 @@ pub fn changelog_path() -> std::path::PathBuf {
 
 /// Default changelog content (embedded in binary as fallback)
 pub fn get_default_changelog() -> Vec<String> {
+    // Try to include CHANGELOG.md, fallback to hardcoded content
+    #[rustfmt::skip]
     const CHANGELOG_CONTENT: &str = include_str!("../CHANGELOG.md");
-    CHANGELOG_CONTENT.lines().map(|s| s.to_string()).collect()
+    
+    let lines: Vec<String> = CHANGELOG_CONTENT.lines().map(|s| s.to_string()).collect();
+    
+    // If somehow the included content is empty, return hardcoded content as last resort
+    if lines.is_empty() {
+        vec![
+            "".to_string(),
+            "📖 Changelog — What's New".to_string(),
+            "".to_string(),
+            "v0.2.4 - Current".to_string(),
+            "  This is the testing version of this feature".to_string(),
+            "  You can ignore it and refer to the README or GitHub for more info".to_string(),
+            "".to_string(),
+            "v1.0.0 — Coming Soon 🚀".to_string(),
+            "  MAJOR performance overhaul — faster rendering and directory scans".to_string(),
+            "  Redesigned UI with improved visual hierarchy".to_string(),
+            "  Dual-pane mode".to_string(),
+            "  Bookmarks / pinned directories".to_string(),
+            "  macOS and Windows support".to_string(),
+            "".to_string(),
+            "v0.1.1".to_string(),
+            "  ✏️  Rename (r) — popup with full cursor navigation".to_string(),
+            "  ℹ️  File info (i) — popup showing size, type, permissions, etc".to_string(),
+            "  🚀  Update checker — background check against crates.io".to_string(),
+            "  🔔  Changelog viewer (U) — in-app scrollable what's new popup".to_string(),
+            "".to_string(),
+            "v0.1.0".to_string(),
+            "  ⚡  Zero-lag navigation with dirty-flag rendering".to_string(),
+            "  🔍  Async search via fd with per-keystroke cancellation".to_string(),
+            "  📋  Multi-select with Space / A".to_string(),
+            "  🗂️  Open-with popup (O)".to_string(),
+            "  🗑️  Trash-safe delete with full undo (u)".to_string(),
+            "  📖  Built-in help popup (?)".to_string(),
+            "  👁️  Live preview pane with scrolling".to_string(),
+            "".to_string(),
+            "Use j/k to scroll, Esc or q to close".to_string(),
+        ]
+    } else {
+        lines
+    }
 }
 
 pub enum Pane {
@@ -109,6 +151,7 @@ pub struct App {
     pub show_changelog: bool,
     pub changelog_lines: Vec<String>,
     pub changelog_scroll: usize,
+    pub status_msg_time: Option<Instant>, // Track when status message was set for auto-expire
 }
 
 impl App {
@@ -150,6 +193,23 @@ impl App {
             show_changelog: false,
             changelog_lines: Vec::new(),
             changelog_scroll: 0,
+            status_msg_time: None,
+        }
+    }
+
+    /// Set a status message that auto-expires after 3 seconds
+    pub fn set_status_timeout(&mut self, msg: String) {
+        self.status_msg = Some(msg);
+        self.status_msg_time = Some(Instant::now());
+    }
+
+    /// Clear expired status messages (call this in main loop)
+    pub fn update_status_expiry(&mut self) {
+        if let Some(time) = self.status_msg_time {
+            if time.elapsed().as_secs_f32() > 3.0 {
+                self.status_msg = None;
+                self.status_msg_time = None;
+            }
         }
     }
 

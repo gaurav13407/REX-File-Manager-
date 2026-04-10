@@ -1,6 +1,6 @@
 [package]
 name = "rex-fm"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 
 description = "A fast terminal file manager with undo, search, and multi-select"

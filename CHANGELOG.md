@@ -1,6 +1,7 @@
 # Changelog
-## v0.2.5- Current 
--This is the testing version of this feature you can ignore it and for more refer to the readme or github Thanks! 
+## v0.2.6- Current 
+-This is the testing version of this feature you can ignore it and for more, refer to the readme or github Thanks! 
+
 ## v1.0.0 — Coming Soon 🚀
 - **MAJOR** performance overhaul — faster rendering and directory scans
 - Redesigned UI with improved visual hierarchy
@@ -10,7 +11,7 @@
 
 ---
 
-## v0.1.1 
+## v0.2.1 
 - ✏️  **Rename** (`r`) — popup with full cursor navigation (←/→/Home/End/Del)
 - ℹ️  **File info** (`i`) — popup showing size, type, permissions, modified date, path
 - 🚀  **Update checker** — background check against crates.io on startup

@@ -146,6 +146,10 @@ fn main() -> Result<(), io::Error> {
         app.changelog_lines = app::get_default_changelog();
     }
 
+    // Show startup notification with version and changelog info
+    let version = env!("CARGO_PKG_VERSION");
+    app.set_status_timeout(format!("✨ rex-fm v{} — Press U for changelog, ? for help", version));
+
     let mut current_watch_path = app.left.path.clone();
     let mut needs_draw = true;
 
@@ -158,6 +162,9 @@ fn main() -> Result<(), io::Error> {
     spawn_update_check(update_tx);
 
     while !app.should_quit {
+        // Update status message expiry (auto-clear old messages)
+        app.update_status_expiry();
+
         if app.left.path != current_watch_path {
             watcher.unwatch(&current_watch_path).ok();
 
