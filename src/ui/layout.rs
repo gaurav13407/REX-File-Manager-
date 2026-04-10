@@ -220,10 +220,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     frame.render_stateful_widget(right, panes[1], &mut right_state);
 
+    // ── Status bar ───────────────────────────────────────────────────────────
     let status_text = app
         .status_msg
         .as_deref()
-        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  d:delete  y:copy  p:paste  u:undo  /:search");
+        .unwrap_or("rex | q:quit  Tab:pane  hjkl:nav  r:rename  i:info  d:delete  y:copy  p:paste  u:undo  /:search");
 
     let status_style = if app.status_msg.is_some() {
         Style::default().bg(Color::DarkGray).fg(Color::Green)
@@ -293,6 +294,49 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(popup, popup_area);
     }
 
+    // ── Rename popup ──────────────────────────────────────────────────────────
+    if app.rename_mode {
+        let popup_area = centered_rect(55, 7, size);
+        frame.render_widget(Clear, popup_area);
+
+        // Split buffer at caret to insert the block cursor glyph
+        let before: String = app.input_buffer.chars().take(app.rename_cursor).collect();
+        let after:  String = app.input_buffer.chars().skip(app.rename_cursor).collect();
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  New name: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(&before, Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(after.as_str(), Style::default().fg(Color::White)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  ←/→", Style::default().fg(Color::Yellow)),
+                Span::raw(" move  "),
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(" confirm  "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(" cancel"),
+            ]),
+        ];
+
+        let rename_popup = Paragraph::new(text)
+            .block(
+                Block::default()
+                    .title(" ✏  Rename ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(rename_popup, popup_area);
+    }
+
     // ── Open-with popup ───────────────────────────────────────────────────────
     if app.open_with_mode {
         let height = (app.open_with_options.len() as u16 + 4).min(size.height - 4);
@@ -331,6 +375,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(Span::styled("  File Operations", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  o            Open file (uses config.json app)"),
             Line::from("  O            Open With popup (choose + save default)"),
+            Line::from("  r            Rename file (pre-filled, Enter:confirm  Esc:cancel)"),
+            Line::from("  i            File info popup (name/size/type/perms/modified/path)"),
             Line::from("  Space        Toggle select file"),
             Line::from("  A            Select all files"),
             Line::from("  Esc          Clear selection / cancel"),
@@ -366,6 +412,132 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
         frame.render_widget(Clear, help_area);
         frame.render_widget(help_popup, help_area);
+    }
+
+    // ── File Info popup (i) ──────────────────────────────────────────────────
+    if app.show_info {
+        use std::os::unix::fs::PermissionsExt;
+
+        if let Some(path) = app.left.entries.get(app.left.cursor) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string());
+
+            let (size_str, type_str, modified_str, perms_str) =
+                if let Ok(meta) = std::fs::metadata(path) {
+                    // Size
+                    let bytes = meta.len();
+                    let size_str = if meta.is_dir() {
+                        "—".to_string()
+                    } else if bytes < 1024 {
+                        format!("{} B", bytes)
+                    } else if bytes < 1024 * 1024 {
+                        format!("{:.1} KB", bytes as f64 / 1024.0)
+                    } else {
+                        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+                    };
+                    // Type
+                    let type_str = if meta.is_dir() { "Directory" } else { "File" }.to_string();
+                    // Modified
+                    let modified_str = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| {
+                            t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| {
+                                let secs = d.as_secs();
+                                let s = secs % 60;
+                                let m = (secs / 60) % 60;
+                                let h = (secs / 3600) % 24;
+                                let days = secs / 86400;
+                                // Rough date: days since epoch
+                                let y = 1970 + days / 365;
+                                let remaining = days % 365;
+                                let mo = remaining / 30 + 1;
+                                let d2 = remaining % 30 + 1;
+                                format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d2, h, m, s)
+                            })
+                        })
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    // Permissions (Unix)
+                    let mode = meta.permissions().mode();
+                    let perms_str = format!(
+                        "{}{}{}{}{}{}{}{}{}{}",
+                        if meta.is_dir() { 'd' } else { '-' },
+                        if mode & 0o400 != 0 { 'r' } else { '-' },
+                        if mode & 0o200 != 0 { 'w' } else { '-' },
+                        if mode & 0o100 != 0 { 'x' } else { '-' },
+                        if mode & 0o040 != 0 { 'r' } else { '-' },
+                        if mode & 0o020 != 0 { 'w' } else { '-' },
+                        if mode & 0o010 != 0 { 'x' } else { '-' },
+                        if mode & 0o004 != 0 { 'r' } else { '-' },
+                        if mode & 0o002 != 0 { 'w' } else { '-' },
+                        if mode & 0o001 != 0 { 'x' } else { '-' },
+                    );
+                    (size_str, type_str, modified_str, perms_str)
+                } else {
+                    ("?".into(), "?".into(), "?".into(), "?".into())
+                };
+
+            let full_path = path.to_string_lossy().to_string();
+            let parent_path = path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let label_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+            let info_text = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Name     : ", label_style),
+                    Span::raw(name.clone()),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Size     : ", label_style),
+                    Span::raw(size_str),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Type     : ", label_style),
+                    Span::raw(type_str),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Perms    : ", label_style),
+                    Span::raw(perms_str),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Modified : ", label_style),
+                    Span::raw(modified_str),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Dir      : ", label_style),
+                    Span::raw(parent_path),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Path     : ", label_style),
+                    Span::raw(full_path),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Press i or Esc to close",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+
+            let height = (info_text.len() as u16 + 2).min(size.height - 2);
+            let info_area = centered_rect(60, height, size);
+
+            let info_popup = Paragraph::new(info_text)
+                .block(
+                    Block::default()
+                        .title(" ℹ  File Info ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Magenta)),
+                )
+                .wrap(Wrap { trim: false });
+
+            frame.render_widget(Clear, info_area);
+            frame.render_widget(info_popup, info_area);
+        }
     }
 }
 

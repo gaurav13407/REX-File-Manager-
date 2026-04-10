@@ -297,6 +297,91 @@ fn main() -> Result<(), io::Error> {
                     continue; // skip all normal key handling below
                 }
 
+                // ── Rename mode: capture input before normal handling ────────
+                if app.rename_mode {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.rename_mode = false;
+                            app.input_buffer.clear();
+                            app.rename_cursor = 0;
+                        }
+                        // Move caret left
+                        KeyCode::Left => {
+                            if app.rename_cursor > 0 {
+                                app.rename_cursor -= 1;
+                            }
+                        }
+                        // Move caret right
+                        KeyCode::Right => {
+                            if app.rename_cursor < app.input_buffer.chars().count() {
+                                app.rename_cursor += 1;
+                            }
+                        }
+                        // Jump to start / end
+                        KeyCode::Home => { app.rename_cursor = 0; }
+                        KeyCode::End  => { app.rename_cursor = app.input_buffer.chars().count(); }
+                        // Delete char BEFORE caret
+                        KeyCode::Backspace => {
+                            if app.rename_cursor > 0 {
+                                // find byte offset of the char before cursor
+                                let byte_pos: usize = app.input_buffer
+                                    .char_indices()
+                                    .nth(app.rename_cursor - 1)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(0);
+                                app.input_buffer.remove(byte_pos);
+                                app.rename_cursor -= 1;
+                            }
+                        }
+                        // Delete char AT caret
+                        KeyCode::Delete => {
+                            if app.rename_cursor < app.input_buffer.chars().count() {
+                                let byte_pos: usize = app.input_buffer
+                                    .char_indices()
+                                    .nth(app.rename_cursor)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(0);
+                                app.input_buffer.remove(byte_pos);
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(path) = app.left.entries.get(app.left.cursor).cloned() {
+                                let is_parent = app.left.path.parent()
+                                    .map_or(false, |p| path.as_path() == p);
+                                if !is_parent && !app.input_buffer.is_empty() {
+                                    let mut new_path = path.clone();
+                                    new_path.set_file_name(&app.input_buffer);
+                                    match std::fs::rename(&path, &new_path) {
+                                        Ok(_) => {
+                                            app.status_msg = Some(format!("Renamed → {}", app.input_buffer));
+                                            app.left.refresh();
+                                        }
+                                        Err(e) => {
+                                            app.status_msg = Some(format!("Rename failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            app.rename_mode = false;
+                            app.input_buffer.clear();
+                            app.rename_cursor = 0;
+                        }
+                        // Insert char at caret position
+                        KeyCode::Char(c) => {
+                            let byte_pos: usize = app.input_buffer
+                                .char_indices()
+                                .nth(app.rename_cursor)
+                                .map(|(i, _)| i)
+                                .unwrap_or_else(|| app.input_buffer.len());
+                            app.input_buffer.insert(byte_pos, c);
+                            app.rename_cursor += 1;
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
                 // ── Help popup: Esc closes ───────────────────────────────────
                 if app.show_help {
                     if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
@@ -359,6 +444,7 @@ fn main() -> Result<(), io::Error> {
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('?') => { app.show_help = true; }
+                    KeyCode::Char('i') => { app.show_info = !app.show_info; }
 
                     // / — local search (current directory)
                     KeyCode::Char('/') => {
@@ -678,6 +764,23 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
 
+                    // r: rename file under cursor
+                    KeyCode::Char('r') => {
+                        if let Some(path) = app.left.entries.get(app.left.cursor) {
+                            let is_parent = app.left.path.parent()
+                                .map_or(false, |p| path.as_path() == p);
+                            if !is_parent {
+                                app.input_buffer = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_default();
+                                app.rename_cursor = app.input_buffer.chars().count(); // caret at end
+                                app.rename_mode = true;
+                                app.show_info = false; // close info if open
+                            }
+                        }
+                    }
+
                     KeyCode::Char('d') => {
                         app.confirm_delete = true;
                     }
@@ -734,7 +837,9 @@ fn main() -> Result<(), io::Error> {
                     }
 
                     KeyCode::Esc => {
-                        if app.search_mode {
+                        if app.show_info {
+                            app.show_info = false;
+                        } else if app.search_mode {
                             app.search_mode = false;
                             app.search_query.clear();
                             app.search_results.clear();

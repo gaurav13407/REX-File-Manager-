@@ -78,6 +78,10 @@ pub struct App {
     pub open_with_options: Vec<String>,
     pub open_with_cursor: usize,
     pub show_help: bool,
+    pub rename_mode: bool,
+    pub input_buffer: String,
+    pub rename_cursor: usize,   // caret position inside input_buffer
+    pub show_info: bool,
 }
 
 impl App {
@@ -110,6 +114,10 @@ impl App {
             open_with_options: Vec::new(),
             open_with_cursor: 0,
             show_help: false,
+            rename_mode: false,
+            input_buffer: String::new(),
+            rename_cursor: 0,
+            show_info: false,
         }
     }
 
