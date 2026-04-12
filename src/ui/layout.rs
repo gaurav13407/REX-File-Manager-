@@ -110,8 +110,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 .collect()
         };
 
+        let filter_text = match app.search_filter {
+            crate::app::SearchFilter::All => "F1:Folders F2:Files F3:System [F4:All]",
+            crate::app::SearchFilter::Folders => "[F1:Folders] F2:Files F3:System F4:All",
+            crate::app::SearchFilter::Files => "F1:Folders [F2:Files] F3:System F4:All",
+            crate::app::SearchFilter::System => "F1:Folders F2:Files [F3:System] F4:All",
+        };
+
         let search_block = Block::default()
-            .title(format!(" {} Search: {}█ ", if app.global_search { "🌐 Global" } else { "📁 Local" }, app.search_query))
+            .title(format!(" {} Search: {}█  {} ", if app.global_search { "🌐 Global" } else { "📁 Local" }, app.search_query, filter_text))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 
@@ -139,12 +146,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         frame.render_stateful_widget(search_list, panes[1], &mut search_state);
 
-        let status_bar = Block::default()
-            .style(Style::default().bg(Color::Cyan).fg(Color::Black))
-            .title(format!(" {} {} | j/k:nav  Enter:goto  Esc/q:cancel ",
+        // Show status message if present, otherwise default search hint
+        let status_text = if let Some(status) = &app.status_msg {
+            status.clone()
+        } else {
+            format!(" {} {} | j/k:nav  Enter:goto  Esc/q:cancel ",
                 if app.global_search { "g (global /):" } else { "/ (local):" },
                 app.search_query
-            ));
+            )
+        };
+        let status_bar = Block::default()
+            .style(Style::default().bg(Color::Cyan).fg(Color::Black))
+            .title(status_text);
         frame.render_widget(status_bar, vertical[1]);
         return;
     }
@@ -438,11 +451,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let mut help_text = vec![
             Line::from(Span::styled(format!("  rex-fm v{}", version), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
             Line::from(""),
-            Line::from(Span::styled("  📢 What's New in v0.2.5", Style::default().fg(Color::Yellow))),
-            Line::from("  • Press U to see the full changelog"),
-            Line::from("  • Improved changelog viewer with scrolling"),
-            Line::from("  • Startup notification with quick tips"),
-            Line::from(""),
             Line::from(Span::styled("  Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  j / k        Move down / up"),
             Line::from("  h            Go to parent directory"),
@@ -471,7 +479,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  ?            Toggle this help"),
-            Line::from("  U            📖 Changelog (what's new) — Press Esc/q to close, j/k to scroll"),
+            Line::from("  U            📖 Changelog (what's new)"),
             Line::from("  q            Quit"),
             Line::from(""),
             Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),
@@ -496,44 +504,39 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // ── Changelog popup (U) ──────────────────────────────────────────────────
     if app.show_changelog {
         let total_lines = app.changelog_lines.len();
-        let visible_height = (size.height as usize).saturating_sub(5).min(40);
+        let visible_height = (size.height as usize).saturating_sub(5).min(30);
 
         // Clamp scroll to valid range
         let max_scroll = total_lines.saturating_sub(visible_height);
         let scroll = app.changelog_scroll.min(max_scroll);
 
-        // Build formatted lines with proper styling for wrapping
-        let changelog_content: Vec<Line> = app.changelog_lines
+        let changelog_items: Vec<ListItem> = app.changelog_lines
             .iter()
             .skip(scroll)
             .take(visible_height)
             .map(|line| {
                 let style = if line.starts_with("v") && line.contains("—") {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
-                } else if line.starts_with("  -") || line.starts_with("  •") {
+                    Style::default().fg(Color::Cyan)
+                } else if line.starts_with("  ") {
                     Style::default().fg(Color::Gray)
                 } else if line.is_empty() {
                     Style::default()
-                } else if line.starts_with("##") {
-                    Style::default().fg(Color::Yellow)
                 } else {
                     Style::default().fg(Color::White)
                 };
-                Line::from(Span::styled(line.clone(), style))
+                ListItem::new(line.clone()).style(style)
             })
             .collect();
 
         let height = (visible_height as u16 + 5).min(size.height - 2);
-        let changelog_area = centered_rect(75, height, size);
+        let changelog_area = centered_rect(60, height, size);
 
-        let changelog_popup = Paragraph::new(changelog_content)
-            .block(
-                Block::default()
-                    .title(" 📖 Changelog — What's New ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Green)),
-            )
-            .wrap(Wrap { trim: false });
+        let changelog_popup = List::new(changelog_items).block(
+            Block::default()
+                .title(" 📖 Changelog — What's New ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Green)),
+        );
 
         frame.render_widget(Clear, changelog_area);
         frame.render_widget(changelog_popup, changelog_area);

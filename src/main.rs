@@ -13,7 +13,7 @@ use crossterm::{
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{Sender, channel};
 use std::{io};
 
 fn get_unique_path(mut dest: std::path::PathBuf) -> std::path::PathBuf {
@@ -46,11 +46,13 @@ fn spawn_search(
     global: bool,
     tx: smpsc::Sender<Vec<std::path::PathBuf>>,
     cancel: Arc<AtomicBool>,
+    status_tx:Sender<String>,
 ) {
     std::thread::spawn(move || {
         let max_depth = if global { "8" } else { "5" };
 
         // Try fd (fastest) → fdfind (Debian name) → fallback to built-in find
+
         let fd_output = std::process::Command::new("fd")
             .arg(&query).arg(&search_root)
             .arg("--max-depth").arg(max_depth)
@@ -59,16 +61,20 @@ fn spawn_search(
             .or_else(|_| {
                 std::process::Command::new("fdfind")
                     .arg(&query).arg(&search_root)
+                    .arg("-H")
                     .arg("--max-depth").arg(max_depth)
                     .arg("--color").arg("never")
                     .output()
             });
+
+        let mut used_fallback=false;
 
         if cancel.load(Ordering::Relaxed) { return; }
 
         let raw_output = match fd_output {
             Ok(out) if out.status.success() || !out.stdout.is_empty() => out.stdout,
             _ => {
+                used_fallback=true;
                 // fd not installed — fall back to system find
                 let depth = if global { "8" } else { "5" };
                 let fallback = std::process::Command::new("find")
@@ -93,6 +99,13 @@ fn spawn_search(
             .map(std::path::PathBuf::from)
             .collect();
         let _ = tx.send(paths);
+
+// 🔥 ADD THIS
+if used_fallback {
+    let _ = status_tx.send(
+        "⚠ fd not installed — using slow fallback (install fd)".to_string()
+    );
+}
     });
 }
 
@@ -154,6 +167,7 @@ fn main() -> Result<(), io::Error> {
     let mut needs_draw = true;
 
     // Async search channel
+     let (status_tx, status_rx) = smpsc::channel::<String>();
     let (search_tx, search_rx) = smpsc::channel::<Vec<std::path::PathBuf>>();
     let mut search_cancel = Arc::new(AtomicBool::new(false));
 
@@ -178,19 +192,24 @@ fn main() -> Result<(), io::Error> {
 
         // Receive async search results (non-blocking)
         if let Ok(results) = search_rx.try_recv() {
+           // Helper: check if path or ANY parent component starts with .
+           let is_hidden = |p: &std::path::PathBuf| {
+               p.components().any(|c| {
+                   if let std::path::Component::Normal(name) = c {
+                       name.to_string_lossy().starts_with('.')
+                   } else {
+                       false
+                   }
+               })
+           };
+           
            app.search_results = results
     .into_iter()
     .filter(|p| match app.search_filter {
         SearchFilter::All => true,
-        SearchFilter::Folders => p.is_dir(),
-        SearchFilter::Files => p.is_file(),
-        SearchFilter::System => {
-            // simple version (hidden/system-like files)
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with('.'))
-                .unwrap_or(false)
-        }
+        SearchFilter::Folders => p.is_dir() && !is_hidden(p),
+        SearchFilter::Files => p.is_file() && !is_hidden(p),
+        SearchFilter::System => is_hidden(p),
     })
     .collect(); 
 app.search_results.sort_by(|a, b| {
@@ -210,6 +229,20 @@ app.search_results.sort_by(|a, b| {
             app.show_update_popup = true; // show popup immediately
             needs_draw = true;
         }
+        if let Ok(msg) = status_rx.try_recv() {
+    // 🔥 only show fd warning once
+    if msg.contains("fd not installed") {
+        if !app.warned_no_fd {
+            app.set_status_timeout(msg);
+            app.warned_no_fd = true;
+            needs_draw = true;
+        }
+    } else {
+        // normal messages always show
+        app.set_status_timeout(msg);
+        needs_draw = true;
+    }
+} 
 
         // Draw FIRST — instant visual feedback regardless of preview state.
         if needs_draw {
@@ -335,12 +368,12 @@ app.search_results.sort_by(|a, b| {
                                 app.search_results.clear();
                             }
                         }
-                        KeyCode::Char('j') => {
+                        KeyCode::Down => {
                             if app.search_cursor + 1 < app.search_results.len() {
                                 app.search_cursor += 1;
                             }
                         }
-                        KeyCode::Char('k') => {
+                        KeyCode::Up => {
                             if app.search_cursor > 0 { app.search_cursor -= 1; }
                         }
                         KeyCode::Backspace => {
@@ -350,25 +383,105 @@ app.search_results.sort_by(|a, b| {
                                 search_cancel.store(true, Ordering::Relaxed);
                                 search_cancel = Arc::new(AtomicBool::new(false));
                                 let root = if app.global_search { std::path::PathBuf::from("/") } else { app.left.path.clone() };
-                                spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel));
+                                spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel),status_tx.clone(),);
                             }
                         }
                         
 
                          KeyCode::F(1) => {
     app.search_filter = SearchFilter::Folders;
+      // 🔥 re-run search
+    if !app.search_query.is_empty() {
+        search_cancel.store(true, Ordering::Relaxed);
+        search_cancel = Arc::new(AtomicBool::new(false));
+
+        let root = if app.global_search {
+            std::path::PathBuf::from("/")
+        } else {
+            app.left.path.clone()
+        };
+
+        spawn_search(
+            app.search_query.clone(),
+            root,
+            app.global_search,
+            search_tx.clone(),
+            Arc::clone(&search_cancel),
+            status_tx.clone(),
+        );
+    }
 }
 
 KeyCode::F(2) => {
     app.search_filter = SearchFilter::Files;
+      // 🔥 re-run search
+    if !app.search_query.is_empty() {
+        search_cancel.store(true, Ordering::Relaxed);
+        search_cancel = Arc::new(AtomicBool::new(false));
+
+        let root = if app.global_search {
+            std::path::PathBuf::from("/")
+        } else {
+            app.left.path.clone()
+        };
+
+        spawn_search(
+            app.search_query.clone(),
+            root,
+            app.global_search,
+            search_tx.clone(),
+            Arc::clone(&search_cancel),
+             status_tx.clone(), 
+        );
+    }
 }
 
 KeyCode::F(3) => {
     app.search_filter = SearchFilter::System;
+      // 🔥 re-run search
+    if !app.search_query.is_empty() {
+        search_cancel.store(true, Ordering::Relaxed);
+        search_cancel = Arc::new(AtomicBool::new(false));
+
+        let root = if app.global_search {
+            std::path::PathBuf::from("/")
+        } else {
+            app.left.path.clone()
+        };
+
+        spawn_search(
+            app.search_query.clone(),
+            root,
+            app.global_search,
+            search_tx.clone(),
+            Arc::clone(&search_cancel),
+             status_tx.clone(), 
+        );
+    }
 }
 
 KeyCode::F(4) => {
     app.search_filter = SearchFilter::All;
+      // 🔥 re-run search
+    if !app.search_query.is_empty() {
+        search_cancel.store(true, Ordering::Relaxed);
+        search_cancel = Arc::new(AtomicBool::new(false));
+
+        let root = if app.global_search {
+            std::path::PathBuf::from("/")
+        } else {
+            app.left.path.clone()
+        };
+
+        spawn_search(
+            app.search_query.clone(),
+            root,
+            app.global_search,
+            search_tx.clone(),
+            Arc::clone(&search_cancel),
+             status_tx.clone(), 
+        );
+    }
 }
 
 
@@ -391,6 +504,7 @@ KeyCode::F(4) => {
             app.global_search,
             search_tx.clone(),
             Arc::clone(&search_cancel),
+status_tx.clone(), 
         );
     }
  
