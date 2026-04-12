@@ -2,7 +2,7 @@ mod app;
 mod fs;
 mod ui;
 mod utils;
-
+use app::SearchFilter;
 use utils::trash::move_to_trash;
 
 use app::{App, Operation, Pane};
@@ -178,7 +178,28 @@ fn main() -> Result<(), io::Error> {
 
         // Receive async search results (non-blocking)
         if let Ok(results) = search_rx.try_recv() {
-            app.search_results = results;
+           app.search_results = results
+    .into_iter()
+    .filter(|p| match app.search_filter {
+        SearchFilter::All => true,
+        SearchFilter::Folders => p.is_dir(),
+        SearchFilter::Files => p.is_file(),
+        SearchFilter::System => {
+            // simple version (hidden/system-like files)
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with('.'))
+                .unwrap_or(false)
+        }
+    })
+    .collect(); 
+app.search_results.sort_by(|a, b| {
+    match (a.is_dir(), b.is_dir()) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.cmp(b),
+    }
+});
             app.search_cursor = 0;
             needs_draw = true;
         }
@@ -296,6 +317,7 @@ fn main() -> Result<(), io::Error> {
                             app.search_mode = false;
                             app.search_query.clear();
                             app.search_results.clear();
+                            app.search_filter=SearchFilter::All;
                         }
                         KeyCode::Enter => {
                             if let Some(path) = app.search_results.get(app.search_cursor).cloned() {
@@ -331,13 +353,47 @@ fn main() -> Result<(), io::Error> {
                                 spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel));
                             }
                         }
-                        KeyCode::Char(c) => {
-                            app.search_query.push(c);
-                            search_cancel.store(true, Ordering::Relaxed);
-                            search_cancel = Arc::new(AtomicBool::new(false));
-                            let root = if app.global_search { std::path::PathBuf::from("/") } else { app.left.path.clone() };
-                            spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel));
-                        }
+                        
+
+                         KeyCode::F(1) => {
+    app.search_filter = SearchFilter::Folders;
+}
+
+KeyCode::F(2) => {
+    app.search_filter = SearchFilter::Files;
+}
+
+KeyCode::F(3) => {
+    app.search_filter = SearchFilter::System;
+}
+
+KeyCode::F(4) => {
+    app.search_filter = SearchFilter::All;
+}
+
+
+                       KeyCode::Char(c) => {
+
+        app.search_query.push(c);
+
+        search_cancel.store(true, Ordering::Relaxed);
+        search_cancel = Arc::new(AtomicBool::new(false));
+
+        let root = if app.global_search {
+            std::path::PathBuf::from("/")
+        } else {
+            app.left.path.clone()
+        };
+
+        spawn_search(
+            app.search_query.clone(),
+            root,
+            app.global_search,
+            search_tx.clone(),
+            Arc::clone(&search_cancel),
+        );
+    }
+ 
                         _ => {}
                     }
                     needs_draw = true;

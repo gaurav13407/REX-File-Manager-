@@ -8,6 +8,14 @@ pub struct AppConfig {
     pub open_with: HashMap<String, String>, // ext -> app name
 }
 
+#[derive(Clone, Copy)]
+pub enum SearchFilter {
+    All,
+    Folders,
+    Files,
+    System,
+}
+
 pub fn config_path() -> std::path::PathBuf {
     // 1. Next to the binary (when installed / cargo run)
     if let Ok(exe) = std::env::current_exe() {
@@ -152,6 +160,7 @@ pub struct App {
     pub changelog_lines: Vec<String>,
     pub changelog_scroll: usize,
     pub status_msg_time: Option<Instant>, // Track when status message was set for auto-expire
+    pub search_filter:SearchFilter,
 }
 
 impl App {
@@ -194,6 +203,7 @@ impl App {
             changelog_lines: Vec::new(),
             changelog_scroll: 0,
             status_msg_time: None,
+            search_filter:SearchFilter::All,
         }
     }
 
