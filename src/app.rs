@@ -162,6 +162,9 @@ pub struct App {
     pub changelog_lines: Vec<String>,
     pub changelog_scroll: usize,
     pub status_msg_time: Option<Instant>, // Track when status message was set for auto-expire
+    pub input_mode: bool,                 // Creating file/folder
+    pub input_text: String,               // Filename/folder name being typed
+    pub create_dir: bool,                 // true = folder, false = file
 }
 
 impl App {
@@ -206,6 +209,9 @@ impl App {
             changelog_lines: Vec::new(),
             changelog_scroll: 0,
             status_msg_time: None,
+            input_mode: false,
+            input_text: String::new(),
+            create_dir: false,
         }
     }
 

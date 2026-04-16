@@ -377,6 +377,45 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
 
+    // ── Input mode popup (create file/folder) ─────────────────────────────────
+    if app.input_mode {
+        let popup_area = centered_rect(55, 7, size);
+        frame.render_widget(Clear, popup_area);
+
+        let title = if app.create_dir {
+            " 📁 Create Folder "
+        } else {
+            " 📄 Create File "
+        };
+
+        let text = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Name: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(&app.input_text, Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Enter", Style::default().fg(Color::Green)),
+                Span::raw(" create  "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(" cancel"),
+            ]),
+        ];
+
+        let input_popup = Paragraph::new(text)
+            .block(
+                Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(input_popup, popup_area);
+    }
+
     // ── Rename popup ──────────────────────────────────────────────────────────
     if app.rename_mode {
         let popup_area = centered_rect(55, 7, size);
@@ -461,6 +500,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(Span::styled("  File Operations", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  o            Open file (uses config.json app)"),
             Line::from("  O            Open With popup (choose + save default)"),
+            Line::from("  n            Create new file"),
+            Line::from("  N            Create new folder"),
             Line::from("  r            Rename file (pre-filled, Enter:confirm  Esc:cancel)"),
             Line::from("  i            File info popup (name/size/type/perms/modified/path)"),
             Line::from("  Space        Toggle select file"),

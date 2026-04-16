@@ -514,6 +514,55 @@ status_tx.clone(),
                     continue; // skip all normal key handling below
                 }
 
+                // ── Input mode: creating file/folder ────────────────────────
+                if app.input_mode {
+                    match key.code {
+                        KeyCode::Esc => {
+                            app.input_mode = false;
+                            app.input_text.clear();
+                        }
+                        KeyCode::Backspace => {
+                            app.input_text.pop();
+                        }
+                        KeyCode::Enter => {
+                            if !app.input_text.is_empty() {
+                                let mut path = app.left.path.clone();
+                                path.push(&app.input_text);
+
+                                // Check if already exists
+                                if path.exists() {
+                                    app.set_status_timeout(format!("❌ Already exists: {}", app.input_text));
+                                } else {
+                                    let result = if app.create_dir {
+                                        std::fs::create_dir(&path)
+                                    } else {
+                                        std::fs::File::create(&path).map(|_| ())
+                                    };
+
+                                    match result {
+                                        Ok(_) => {
+                                            let item_type = if app.create_dir { "Folder" } else { "File" };
+                                            app.set_status_timeout(format!("✅ Created {}: {}", item_type, app.input_text));
+                                            app.left.refresh();
+                                        }
+                                        Err(e) => {
+                                            app.set_status_timeout(format!("❌ Create failed: {}", e));
+                                        }
+                                    }
+                                }
+                            }
+                            app.input_mode = false;
+                            app.input_text.clear();
+                        }
+                        KeyCode::Char(c) => {
+                            app.input_text.push(c);
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue; // skip all normal key handling below
+                }
+
                 // ── Rename mode: capture input before normal handling ────────
                 if app.rename_mode {
                     match key.code {
@@ -1063,6 +1112,20 @@ status_tx.clone(),
                                 app.show_info = false; // close info if open
                             }
                         }
+                    }
+
+                    // n: create new file
+                    KeyCode::Char('n') => {
+                        app.input_mode = true;
+                        app.input_text.clear();
+                        app.create_dir = false; // file
+                    }
+
+                    // N: create new folder
+                    KeyCode::Char('N') => {
+                        app.input_mode = true;
+                        app.input_text.clear();
+                        app.create_dir = true; // folder
                     }
 
                     KeyCode::Char('d') => {
