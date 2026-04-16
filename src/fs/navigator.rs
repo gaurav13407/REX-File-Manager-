@@ -33,6 +33,12 @@ impl Navigator {
         if let Ok(read) = fs::read_dir(&self.path) {
             // Use DirEntry::file_type() — cheaper than stat on most OSes
             for entry in read.flatten() {
+                // Hide system files (starting with .) by default
+                let file_name = entry.file_name();
+                if file_name.to_string_lossy().starts_with('.') {
+                    continue; // Skip hidden files
+                }
+                
                 let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 self.entries.push(entry.path());
                 self.entry_is_dir.push(is_dir);

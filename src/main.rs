@@ -206,7 +206,7 @@ fn main() -> Result<(), io::Error> {
            app.search_results = results
     .into_iter()
     .filter(|p| match app.search_filter {
-        SearchFilter::All => true,
+        SearchFilter::All => !is_hidden(p), // Hide system files by default
         SearchFilter::Folders => p.is_dir() && !is_hidden(p),
         SearchFilter::Files => p.is_file() && !is_hidden(p),
         SearchFilter::System => is_hidden(p),
