@@ -1,8 +1,11 @@
 mod app;
 mod fs;
+#[path = "utils/fuzzy.rs"]
+mod fuzzy;
 mod ui;
 mod utils;
 use app::SearchFilter;
+use fuzzy::FuzzyFinder;
 use utils::trash::move_to_trash;
 
 use app::{App, Operation, Pane};
@@ -44,28 +47,53 @@ fn spawn_search(
     query: String,
     search_root: std::path::PathBuf,
     global: bool,
+    filter: SearchFilter,
     tx: smpsc::Sender<Vec<std::path::PathBuf>>,
     cancel: Arc<AtomicBool>,
     status_tx:Sender<String>,
 ) {
     std::thread::spawn(move || {
         let max_depth = if global { "8" } else { "5" };
+        let exclusions = [".cargo", "target", ".git", ".wine", ".rex_trash", "node_modules"];
+
+        let build_fd_command = |program: &str| {
+            let mut command = std::process::Command::new(program);
+            command.arg(&query).arg(&search_root);
+
+            if program == "fdfind" {
+                command.arg("-H");
+            }
+
+            command.arg("--max-depth").arg(max_depth);
+            command.arg("--color").arg("never");
+
+            if matches!(filter, SearchFilter::System) {
+                command.arg("--hidden");
+            } else {
+                command.arg("--one-file-system");
+                for exclusion in exclusions {
+                    command.arg("--exclude").arg(exclusion);
+                }
+            }
+
+            match filter {
+                SearchFilter::Files => {
+                    command.arg("--type").arg("f");
+                }
+                SearchFilter::Folders => {
+                    command.arg("--type").arg("d");
+                }
+                _ => {}
+            }
+
+            command
+        };
 
         // Try fd (fastest) → fdfind (Debian name) → fallback to built-in find
 
-        let fd_output = std::process::Command::new("fd")
-            .arg(&query).arg(&search_root)
-            .arg("--max-depth").arg(max_depth)
-            .arg("--color").arg("never")
+        let fd_output = build_fd_command("fd")
             .output()
-            .or_else(|_| {
-                std::process::Command::new("fdfind")
-                    .arg(&query).arg(&search_root)
-                    .arg("-H")
-                    .arg("--max-depth").arg(max_depth)
-                    .arg("--color").arg("never")
-                    .output()
-            });
+            .or_else(|_| build_fd_command("fdfind").output());
 
         let mut used_fallback=false;
 
@@ -76,12 +104,17 @@ fn spawn_search(
             _ => {
                 used_fallback=true;
                 // fd not installed — fall back to system find
-                let depth = if global { "8" } else { "5" };
-                let fallback = std::process::Command::new("find")
+                let mut fallback = std::process::Command::new("find");
+                fallback
                     .arg(&search_root)
-                    .arg("-maxdepth").arg(depth)
-                    .arg("-iname").arg(format!("*{}*", query))
-                    .output();
+                    .arg("-maxdepth").arg(max_depth);
+                if matches!(filter, SearchFilter::Files) {
+                    fallback.arg("-type").arg("f");
+                } else if matches!(filter, SearchFilter::Folders) {
+                    fallback.arg("-type").arg("d");
+                }
+                fallback.arg("-iname").arg(format!("*{}*", query));
+                let fallback = fallback.output();
                 match fallback {
                     Ok(out) => out.stdout,
                     Err(_) => return,
@@ -92,12 +125,49 @@ fn spawn_search(
         if cancel.load(Ordering::Relaxed) { return; }
 
         let result = String::from_utf8_lossy(&raw_output);
-        let paths: Vec<std::path::PathBuf> = result
+        let raw_paths: Vec<std::path::PathBuf> = result
             .lines()
             .filter(|l| !l.is_empty())
-            .take(300)
+            .take(500)
             .map(std::path::PathBuf::from)
             .collect();
+
+        let paths = if raw_paths.is_empty() {
+            Vec::new()
+        } else {
+            let entries: Vec<(String, std::path::PathBuf)> = raw_paths
+                .into_iter()
+                .map(|path| {
+                    let filename = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                    (filename, path)
+                })
+                .collect();
+
+            let mut finder = FuzzyFinder::new();
+            finder.populate(entries.iter().map(|(filename, _)| filename.clone()).collect());
+
+            let mut paths_by_name: std::collections::HashMap<
+                String,
+                std::collections::VecDeque<std::path::PathBuf>,
+            > = std::collections::HashMap::new();
+            for (filename, path) in entries {
+                paths_by_name.entry(filename).or_default().push_back(path);
+            }
+
+            finder
+                .query(&query)
+                .into_iter()
+                .filter_map(|filename| {
+                    paths_by_name
+                        .get_mut(&filename)
+                        .and_then(|paths| paths.pop_front())
+                })
+                .collect()
+        };
+
         let _ = tx.send(paths);
 
 // 🔥 ADD THIS
@@ -382,8 +452,15 @@ app.search_results.sort_by(|a, b| {
                             if !app.search_query.is_empty() {
                                 search_cancel.store(true, Ordering::Relaxed);
                                 search_cancel = Arc::new(AtomicBool::new(false));
-                                let root = if app.global_search { std::path::PathBuf::from("/") } else { app.left.path.clone() };
-                                spawn_search(app.search_query.clone(), root, app.global_search, search_tx.clone(), Arc::clone(&search_cancel),status_tx.clone(),);
+                                let root = if app.global_search {
+                                    match app.search_filter {
+                                        SearchFilter::System => std::path::PathBuf::from("/"),
+                                        _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+                                    }
+                                } else {
+                                    app.left.path.clone()
+                                };
+                                spawn_search(app.search_query.clone(), root, app.global_search, app.search_filter, search_tx.clone(), Arc::clone(&search_cancel),status_tx.clone(),);
                             }
                         }
                         
@@ -396,7 +473,10 @@ app.search_results.sort_by(|a, b| {
         search_cancel = Arc::new(AtomicBool::new(false));
 
         let root = if app.global_search {
-            std::path::PathBuf::from("/")
+            match app.search_filter {
+                SearchFilter::System => std::path::PathBuf::from("/"),
+                _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+            }
         } else {
             app.left.path.clone()
         };
@@ -405,6 +485,7 @@ app.search_results.sort_by(|a, b| {
             app.search_query.clone(),
             root,
             app.global_search,
+            app.search_filter,
             search_tx.clone(),
             Arc::clone(&search_cancel),
             status_tx.clone(),
@@ -420,7 +501,10 @@ KeyCode::F(2) => {
         search_cancel = Arc::new(AtomicBool::new(false));
 
         let root = if app.global_search {
-            std::path::PathBuf::from("/")
+            match app.search_filter {
+                SearchFilter::System => std::path::PathBuf::from("/"),
+                _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+            }
         } else {
             app.left.path.clone()
         };
@@ -429,6 +513,7 @@ KeyCode::F(2) => {
             app.search_query.clone(),
             root,
             app.global_search,
+            app.search_filter,
             search_tx.clone(),
             Arc::clone(&search_cancel),
              status_tx.clone(), 
@@ -444,7 +529,10 @@ KeyCode::F(3) => {
         search_cancel = Arc::new(AtomicBool::new(false));
 
         let root = if app.global_search {
-            std::path::PathBuf::from("/")
+            match app.search_filter {
+                SearchFilter::System => std::path::PathBuf::from("/"),
+                _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+            }
         } else {
             app.left.path.clone()
         };
@@ -453,6 +541,7 @@ KeyCode::F(3) => {
             app.search_query.clone(),
             root,
             app.global_search,
+            app.search_filter,
             search_tx.clone(),
             Arc::clone(&search_cancel),
              status_tx.clone(), 
@@ -468,7 +557,10 @@ KeyCode::F(4) => {
         search_cancel = Arc::new(AtomicBool::new(false));
 
         let root = if app.global_search {
-            std::path::PathBuf::from("/")
+            match app.search_filter {
+                SearchFilter::System => std::path::PathBuf::from("/"),
+                _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+            }
         } else {
             app.left.path.clone()
         };
@@ -477,6 +569,7 @@ KeyCode::F(4) => {
             app.search_query.clone(),
             root,
             app.global_search,
+            app.search_filter,
             search_tx.clone(),
             Arc::clone(&search_cancel),
              status_tx.clone(), 
@@ -493,7 +586,10 @@ KeyCode::F(4) => {
         search_cancel = Arc::new(AtomicBool::new(false));
 
         let root = if app.global_search {
-            std::path::PathBuf::from("/")
+            match app.search_filter {
+                SearchFilter::System => std::path::PathBuf::from("/"),
+                _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+            }
         } else {
             app.left.path.clone()
         };
@@ -502,6 +598,7 @@ KeyCode::F(4) => {
             app.search_query.clone(),
             root,
             app.global_search,
+            app.search_filter,
             search_tx.clone(),
             Arc::clone(&search_cancel),
 status_tx.clone(), 

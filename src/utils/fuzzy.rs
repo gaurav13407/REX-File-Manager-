@@ -2,7 +2,7 @@ use nucleo::{Config, Nucleo, Utf32String};
 use std::sync::Arc;
 
 pub struct FuzzyFinder {
-    pub matcher: Nucleo<String>,
+    matcher: Nucleo<String>,
 }
 
 impl FuzzyFinder {
@@ -13,13 +13,13 @@ impl FuzzyFinder {
         }
     }
 
-   pub fn populate(&mut self, items: Vec<String>) {
-    self.matcher = Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1);
-    let injector = self.matcher.injector();
-    for item in items {
-        injector.push(item, |data, dst| dst[0] = Utf32String::from(data.as_str()));
+    pub fn populate(&mut self, items: Vec<String>) {
+        self.matcher = Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1);
+        let injector = self.matcher.injector();
+        for item in items {
+            injector.push(item, |data, dst| dst[0] = Utf32String::from(data.as_str()));
+        }
     }
-} 
 
     pub fn query(&mut self, pattern: &str) -> Vec<String> {
         self.matcher.pattern.reparse(

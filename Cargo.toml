@@ -1,6 +1,6 @@
 [package]
 name = "rex-fm"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 
 description = "A fast terminal file manager with undo, search, and multi-select"
@@ -26,3 +26,4 @@ walkdir = "2"
 notify = "6"
 dirs = "5"
 ureq = { version = "2", features = ["json"] }
+nucleo = "0.5"

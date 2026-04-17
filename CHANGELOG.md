@@ -4,48 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## v0.3.1 — Smart System Files & File Creation
-**Release Date:** April 16, 2026
+## v0.3.2 — Nucleo Fuzzy Search Upgrade
+**Release Date:** April 17, 2026
 
 ### 🚀 Added
-- **Hide system files by default** — Hidden files/folders (starting with `.`) are now hidden in normal browsing
-  - Press **F3** to toggle view system files only
-  - Keep file manager clean and focused on regular files
-- **Create new files** — Press `n` to create a new file with custom name
-- **Create new folders** — Press `N` to create a new folder with custom name
-  - Input popup with visual feedback
-  - Prevents accidental overwrites (checks if file already exists)
-  - Shows success/error messages
-- **Fuzzy search with Nucleo** — Smart filename matching for search results
-  - Ranks results by relevance, not just alphabetical
-  - Better search experience for finding files
+- **Nucleo-powered fuzzy search** — Search results are now ranked with `nucleo` instead of the old manual scorer
+- **Filename-first matching** — Global search ranks by file or folder name, then returns the original full path
+- **Search result refresh on every filter key** — `F1`/`F2`/`F3`/`F4`, typing, and backspace all rerun the active search with the current filter
 
-### 🎯 Filter System (Search)
-- **F1** → Folders only (no hidden)
-- **F2** → Files only (no hidden)
-- **F3** → System/hidden files only
-- **F4** → All files (including hidden - legacy mode)
+### 🎯 Search Filters
+- **F1** → Folders only
+- **F2** → Files only
+- **F3** → System-wide search from `/` with hidden entries included
+- **F4** → All results from home search
 
 ### 🔧 Improvements
-- Smart file/folder filtering applies to both normal browsing and search
-- Hidden files no longer clutter the main view
-- Better UX for file operations workflow
-- Updated help section (?) with new keybinds
-
----
-
-### 🐛 Fixed
-- Infinite scrolling bug in preview panel
-- Cursor out-of-bounds after resize
-- Incorrect highlight offset in preview list
-- Layout issues when resizing terminal
-- Search not refreshing on filter change
-
----
+- Global search now starts from `$HOME` for `All`, `Files`, and `Folders`
+- `System` search is the only mode that searches from `/`
+- Home-scoped search now uses `--one-file-system` and skips noisy directories like `.cargo`, `.git`, `target`, `.wine`, `.rex_trash`, and `node_modules`
+- Raw `fd` candidate lists are capped before fuzzy ranking to keep search responsive
 
 ### ⚠️ Compatibility
-- Works without `fd` (fallback to `find`)
-- Supports Linux environments (tested on Ubuntu/Arch)
+- Still works without `fd` by falling back to `find`
 
 ---
 
