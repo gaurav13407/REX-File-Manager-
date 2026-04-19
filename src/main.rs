@@ -200,36 +200,36 @@ fn spawn_update_check(tx: smpsc::Sender<String>) {
     });
 }
 
-/// Recursively compute the total size of a directory.
-fn get_dir_size(path: &std::path::Path) -> u64 {
-    let mut size = 0u64;
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                size += get_dir_size(&p);
-            } else {
-                size += entry.metadata().map(|m| m.len()).unwrap_or(0);
+/// Compute sizes for all direct children of `dir` using `du -sb --max-depth=1`.
+/// Delegates to the native C `du` tool for maximum speed — instant even on huge dirs.
+fn compute_sizes(dir: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
+    let mut result = Vec::new();
+
+    let output = std::process::Command::new("du")
+        .arg("-b")
+        .arg("--max-depth=1")
+        .arg("--")
+        .arg(dir)
+        .stderr(std::process::Stdio::null()) // suppress permission-denied noise
+        .output();
+
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+
+        for line in text.lines() {
+            // Each line: "<size>\t<path>"
+            if let Some((size_str, path_str)) = line.split_once('\t') {
+                if let Ok(size) = size_str.trim().parse::<u64>() {
+                    let path = std::path::PathBuf::from(path_str);
+                    // Skip the root directory itself (du includes it as the last line)
+                    if path != dir {
+                        result.push((path, size));
+                    }
+                }
             }
         }
     }
-    size
-}
 
-/// Compute sizes for all children of `dir`, sorted biggest-first.
-fn compute_sizes(dir: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
-    let mut result = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let size = if path.is_dir() {
-                get_dir_size(&path)
-            } else {
-                entry.metadata().map(|m| m.len()).unwrap_or(0)
-            };
-            result.push((path, size));
-        }
-    }
     result.sort_by(|a, b| b.1.cmp(&a.1));
     result
 }
