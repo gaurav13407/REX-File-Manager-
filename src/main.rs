@@ -356,6 +356,7 @@ app.search_results.sort_by(|a, b| {
 
         // Receive size analyzer results (non-blocking)
         if let Ok(result) = size_rx.try_recv() {
+            app.size_total = result.iter().map(|(_, s)| *s).sum();
             app.size_entries = result;
             app.size_loading = false;
             app.size_cursor = 0;
@@ -827,10 +828,20 @@ status_tx.clone(),
                     continue;
                 }
 
-                // ── Help popup: Esc closes ───────────────────────────────────
+                // ── Help popup: Esc closes, j/k scrolls ─────────────────────
                 if app.show_help {
-                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
-                        app.show_help = false;
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                            app.show_help = false;
+                            app.help_scroll = 0;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            app.help_scroll = app.help_scroll.saturating_add(1);
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.help_scroll = app.help_scroll.saturating_sub(1);
+                        }
+                        _ => {}
                     }
                     needs_draw = true;
                     continue;
@@ -909,7 +920,7 @@ status_tx.clone(),
                     continue;
                 }
 
-                // ── Size mode: j/k navigate, Enter opens dir, Esc exits ──────
+                // ── Size mode: j/k navigate, Enter opens dir, d delete, Esc exits
                 if app.size_mode {
                     match key.code {
                         KeyCode::Char('j') => {
@@ -923,7 +934,6 @@ status_tx.clone(),
                         KeyCode::Enter => {
                             if let Some((path, _)) = app.size_entries.get(app.size_cursor).cloned() {
                                 if path.is_dir() {
-                                    // Navigate into the directory AND rescan sizes
                                     app.left.path = path.clone();
                                     app.left.refresh();
                                     app.refresh_preview();
@@ -936,11 +946,25 @@ status_tx.clone(),
                                 }
                             }
                         }
-                        KeyCode::Char('z') | KeyCode::Esc | KeyCode::Char('q') => {
+                        // h — go to parent directory (stay in size mode)
+                        KeyCode::Char('h') => {
+                            if let Some(parent) = app.left.path.parent().map(|p| p.to_path_buf()) {
+                                app.left.path = parent.clone();
+                                app.left.refresh();
+                                app.refresh_preview();
+                                app.size_loading = true;
+                                let tx = size_tx.clone();
+                                std::thread::spawn(move || {
+                                    let _ = tx.send(compute_sizes(&parent));
+                                });
+                            }
+                        }
+                        KeyCode::Char('z') | KeyCode::Char('Z') | KeyCode::Esc | KeyCode::Char('q') => {
                             app.size_mode = false;
                         }
                         _ => {}
                     }
+
                     needs_draw = true;
                     continue;
                 }
@@ -950,8 +974,8 @@ status_tx.clone(),
                     KeyCode::Char('?') => { app.show_help = true; }
                     KeyCode::Char('i') => { app.show_info = !app.show_info; }
 
-                    // z — toggle disk analyzer mode (ncdu-style)
-                    KeyCode::Char('z') => {
+                    // z / Z — toggle disk analyzer mode (ncdu-style)
+                    KeyCode::Char('z') | KeyCode::Char('Z') => {
                         app.size_mode = !app.size_mode;
                         if app.size_mode {
                             app.size_loading = true;

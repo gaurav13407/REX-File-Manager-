@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## v0.4.0 — Disk Analyzer & System Awareness
+**Release Date:** April 19, 2026
+
+### 🚀 Added
+- **💾 Disk usage bar** — Always-visible gauge at the bottom showing used/total/free space with color-coded fill (green < 70%, yellow < 90%, red ≥ 90%)
+- **📊 Disk Analyzer mode (`z` / `Z`)** — ncdu-style directory size viewer in the right pane
+  - Uses native `du` for instant results even on huge directories
+  - Proportional bar charts with percentage for each entry
+  - Color-coded bars (green/yellow/red) based on relative size
+  - Navigate with `h/j/k/Enter`, exit with `Esc/q/z`
+  - Title shows total directory size
+- **Scrollable help popup (`?`)** — Help panel now supports `j/k` scrolling with position indicator
+- **`Z` (capital) keybind** — Alias for `z` to toggle disk analyzer
+- **Search filter keys in help** — `F1-F4` filter documentation now visible in help popup
+- **`g` for global search** — Clearly documented in help popup
+
+### 🔧 Improvements
+- Disk stats auto-refresh when navigating to a different partition
+- Help popup uses a fixed-height scrollable list instead of overflowing
+- `format_size()` helper now supports TB-scale values
+- Size analyzer picks the best (longest) mount-point match for accuracy
+
+### 🧩 Keybinds (Disk Analyzer)
+| Key | Action |
+|-----|--------|
+| `z` / `Z` | Toggle analyzer on/off |
+| `j` / `k` | Navigate entries |
+| `h` | Go to parent directory |
+| `Enter` | Open directory (rescans) |
+| `Esc` / `q` | Exit analyzer |
+
+---
+
 ## v0.3.2 — Nucleo Fuzzy Search Upgrade
 **Release Date:** April 17, 2026
 

@@ -199,6 +199,7 @@ pub struct App {
     pub open_with_options: Vec<String>,
     pub open_with_cursor: usize,
     pub show_help: bool,
+    pub help_scroll: usize,
     pub rename_mode: bool,
     pub input_buffer: String,
     pub rename_cursor: usize,   // caret position inside input_buffer
@@ -220,6 +221,7 @@ pub struct App {
     pub size_entries: Vec<(std::path::PathBuf, u64)>,
     pub size_cursor: usize,
     pub size_loading: bool,
+    pub size_total: u64,
 }
 
 impl App {
@@ -257,6 +259,7 @@ impl App {
             open_with_options: Vec::new(),
             open_with_cursor: 0,
             show_help: false,
+            help_scroll: 0,
             rename_mode: false,
             input_buffer: String::new(),
             rename_cursor: 0,
@@ -277,6 +280,7 @@ impl App {
             size_entries: Vec::new(),
             size_cursor: 0,
             size_loading: false,
+            size_total: 0,
         }
     }
 

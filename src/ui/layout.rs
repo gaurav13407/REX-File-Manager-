@@ -196,9 +196,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     if app.size_mode {
         // ── Disk Analyzer mode (ncdu-style) ──────────────────────────────
-        let max_size = app.size_entries.iter().map(|(_, s)| *s).max().unwrap_or(1).max(1);
-        // Available width for the bar (pane width minus borders, icon, name, size label)
-        let bar_width = 16usize;
+        let total = if app.size_total > 0 { app.size_total } else { 1 };
+        let bar_width = 20usize;
 
         let size_items: Vec<ListItem> = if app.size_loading {
             vec![ListItem::new(Span::styled(
@@ -214,17 +213,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .to_string_lossy();
                 let icon = get_icon_cached(p, p.is_dir());
 
+                let percent = ((*size as f64 / total as f64) * 100.0) as u64;
+
                 // Build a proportional bar
                 let filled = if *size > 0 {
-                    (((*size as f64 / max_size as f64) * bar_width as f64).ceil() as usize).max(1)
+                    (((*size as f64 / total as f64) * bar_width as f64).ceil() as usize).max(1)
                 } else { 0 };
                 let empty = bar_width.saturating_sub(filled);
                 let bar: String = "█".repeat(filled) + &"░".repeat(empty);
 
-                // Color based on relative size
-                let bar_color = if filled > bar_width * 3 / 4 {
+                // Color based on percentage
+                let bar_color = if percent >= 50 {
                     Color::Red
-                } else if filled > bar_width / 2 {
+                } else if percent >= 20 {
                     Color::Yellow
                 } else {
                     Color::Green
@@ -232,15 +233,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
                 let size_str = crate::app::format_size(*size);
 
+                // Truncate name to fit
+                let max_name = 22;
+                let display_name = if name.len() > max_name {
+                    format!("{}…", &name[..max_name - 1])
+                } else {
+                    name.to_string()
+                };
+
                 ListItem::new(Line::from(vec![
                     Span::raw(format!(" {} ", icon)),
                     Span::styled(
-                        format!("{:<30}", if name.len() > 30 {
-                            format!("{}…", &name[..29])
-                        } else {
-                            name.to_string()
-                        }),
+                        format!("{:<width$}", display_name, width = max_name),
                         Style::default().fg(if p.is_dir() { Color::Cyan } else { Color::White }),
+                    ),
+                    Span::styled(
+                        format!("{:>3}% ", percent),
+                        Style::default().fg(bar_color),
                     ),
                     Span::styled(bar, Style::default().fg(bar_color)),
                     Span::raw(" "),
@@ -252,8 +261,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }).collect()
         };
 
+        // Show total in the title
+        let title_text = if app.size_loading {
+            " 📊 Disk Analyzer — Scanning… ".to_string()
+        } else {
+            format!(
+                " 📊 Disk Analyzer — Total: {} (z:close  h/j/k:nav  Enter:open) ",
+                crate::app::format_size(app.size_total),
+            )
+        };
+
         let size_block = Block::default()
-            .title(" 📊 Disk Analyzer (z:close  j/k:nav  Enter:open) ")
+            .title(title_text)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Magenta));
 
@@ -567,10 +586,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.render_widget(popup, area);
     }
 
-    // ── Help popup (?): all keybinds ─────────────────────────────────────────
+    // ── Help popup (?): all keybinds (scrollable) ─────────────────────────────
     if app.show_help {
         let version = env!("CARGO_PKG_VERSION");
-        let mut help_text = vec![
+        let help_lines: Vec<Line> = vec![
             Line::from(Span::styled(format!("  rex-fm v{}", version), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
             Line::from(""),
             Line::from(Span::styled("  Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
@@ -585,42 +604,72 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from("  O            Open With popup (choose + save default)"),
             Line::from("  n            Create new file"),
             Line::from("  N            Create new folder"),
-            Line::from("  r            Rename file (pre-filled, Enter:confirm  Esc:cancel)"),
-            Line::from("  i            File info popup (name/size/type/perms/modified/path)"),
+            Line::from("  r            Rename file (cursor-aware, Enter/Esc)"),
+            Line::from("  i            File info popup"),
             Line::from("  Space        Toggle select file"),
             Line::from("  A            Select all files"),
             Line::from("  Esc          Clear selection / cancel"),
             Line::from("  y            Copy  |  x  Cut  |  p  Paste"),
-            Line::from("  d            Delete (trash)  — confirm with y"),
+            Line::from("  d            Delete (trash) — confirm with y"),
             Line::from("  u            Undo last operation"),
             Line::from(""),
             Line::from(Span::styled("  Search", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  /            Local search (current directory)"),
-            Line::from("  g            Global search (from /)"),
+            Line::from("  g            Global search (from ~ or /)"),
             Line::from("  j / k        Navigate results"),
             Line::from("  Enter        Jump to result"),
+            Line::from("  F1           Filter: Folders only"),
+            Line::from("  F2           Filter: Files only"),
+            Line::from("  F3           Filter: System/hidden"),
+            Line::from("  F4           Filter: All (default)"),
             Line::from("  Esc / q      Exit search"),
             Line::from(""),
+            Line::from(Span::styled("  Disk Analyzer", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+            Line::from("  z / Z        Toggle disk analyzer on/off"),
+            Line::from("  j / k        Navigate entries"),
+            Line::from("  h            Go to parent directory"),
+            Line::from("  Enter        Open directory (rescans sizes)"),
+            Line::from("  Esc / q / z  Exit analyzer"),
+            Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from("  ?            Toggle this help"),
-            Line::from("  z            📊 Disk analyzer (ncdu-style size view)"),
+            Line::from("  ?            Toggle this help (j/k to scroll)"),
             Line::from("  U            📖 Changelog (what's new)"),
             Line::from("  q            Quit"),
             Line::from(""),
-            Line::from(Span::styled("  Press Esc or ? to close", Style::default().fg(Color::DarkGray))),
+            Line::from(Span::styled("  j/k:scroll  Esc/?:close", Style::default().fg(Color::DarkGray))),
         ];
 
-        let height = (help_text.len() as u16 + 2).min(size.height - 2);
-        let help_area = centered_rect(62, height, size);
+        let total_help = help_lines.len();
+        let popup_height = 24u16.min(size.height.saturating_sub(4));
+        let visible = (popup_height as usize).saturating_sub(2); // minus border rows
 
-        let help_popup = Paragraph::new(help_text)
-            .block(
-                Block::default()
-                    .title(" ❓ rex — Help ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
-            )
-            .wrap(Wrap { trim: false });
+        // Clamp scroll
+        let max_scroll = total_help.saturating_sub(visible);
+        if app.help_scroll > max_scroll {
+            app.help_scroll = max_scroll;
+        }
+
+        let help_items: Vec<ListItem> = help_lines
+            .into_iter()
+            .skip(app.help_scroll)
+            .take(visible)
+            .map(|line| ListItem::new(line))
+            .collect();
+
+        let help_area = centered_rect(65, popup_height, size);
+
+        let scroll_indicator = if total_help > visible {
+            format!(" ❓ rex — Help ({}/{}) ", app.help_scroll + 1, total_help)
+        } else {
+            " ❓ rex — Help ".to_string()
+        };
+
+        let help_popup = List::new(help_items).block(
+            Block::default()
+                .title(scroll_indicator)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
 
         frame.render_widget(Clear, help_area);
         frame.render_widget(help_popup, help_area);
