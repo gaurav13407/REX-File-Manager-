@@ -169,24 +169,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    // ── Normal mode: preview ─────────────────────────────────────────────────
-    let preview_items: Vec<ListItem> = if app.preview_content.is_empty() {
-        vec![ListItem::new("No preview")]
-    } else {
-        let total = app.preview_content.len();
-        app.clamp_scroll(total, visible_height);
-        app.preview_content
-            .iter()
-            .skip(app.preview_scroll)
-            .take(visible_height)
-            .map(|line| ListItem::new(line.clone()).style(Style::default().fg(Color::Gray)))
-            .collect()
-    };
-
-    let right_title = match app.active_pane {
-        Pane::Right => "Preview *",
-        _ => "Preview",
-    };
+    // ── Normal mode: preview OR size analyzer ─────────────────────────────────
 
     let left_block = Block::default()
         .title(left_title)
@@ -196,22 +179,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             _ => Style::default(),
         });
 
-    let right_block = Block::default()
-        .title(right_title)
-        .borders(Borders::ALL)
-        .border_style(match app.active_pane {
-            Pane::Right => Style::default().fg(Color::Yellow),
-            _ => Style::default(),
-        });
-
     let left = List::new(left_items).block(left_block).highlight_style(
-        Style::default()
-            .bg(Color::Blue)
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD),
-    );
-
-    let right = List::new(preview_items).block(right_block).highlight_style(
         Style::default()
             .bg(Color::Blue)
             .fg(Color::Black)
@@ -224,21 +192,126 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         left_state.select(None);
     }
-
     frame.render_stateful_widget(left, panes[0], &mut left_state);
 
-    let mut right_state = ListState::default();
-    if matches!(app.active_pane, Pane::Right) {
-        // The preview list is built from .skip(preview_scroll), so item 0 in
-        // the list corresponds to line preview_scroll in the file.
-        // We must pass a RELATIVE offset, not the absolute cursor index.
-        let relative = app.preview_cursor.saturating_sub(app.preview_scroll);
-        right_state.select(Some(relative));
-    } else {
-        right_state.select(None);
-    }
+    if app.size_mode {
+        // ── Disk Analyzer mode (ncdu-style) ──────────────────────────────
+        let max_size = app.size_entries.iter().map(|(_, s)| *s).max().unwrap_or(1).max(1);
+        // Available width for the bar (pane width minus borders, icon, name, size label)
+        let bar_width = 16usize;
 
-    frame.render_stateful_widget(right, panes[1], &mut right_state);
+        let size_items: Vec<ListItem> = if app.size_loading {
+            vec![ListItem::new(Span::styled(
+                " ⏳ Calculating sizes…",
+                Style::default().fg(Color::Yellow),
+            ))]
+        } else if app.size_entries.is_empty() {
+            vec![ListItem::new(" Empty directory")]
+        } else {
+            app.size_entries.iter().map(|(p, size)| {
+                let name = p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let icon = get_icon_cached(p, p.is_dir());
+
+                // Build a proportional bar
+                let filled = if *size > 0 {
+                    (((*size as f64 / max_size as f64) * bar_width as f64).ceil() as usize).max(1)
+                } else { 0 };
+                let empty = bar_width.saturating_sub(filled);
+                let bar: String = "█".repeat(filled) + &"░".repeat(empty);
+
+                // Color based on relative size
+                let bar_color = if filled > bar_width * 3 / 4 {
+                    Color::Red
+                } else if filled > bar_width / 2 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
+
+                let size_str = crate::app::format_size(*size);
+
+                ListItem::new(Line::from(vec![
+                    Span::raw(format!(" {} ", icon)),
+                    Span::styled(
+                        format!("{:<30}", if name.len() > 30 {
+                            format!("{}…", &name[..29])
+                        } else {
+                            name.to_string()
+                        }),
+                        Style::default().fg(if p.is_dir() { Color::Cyan } else { Color::White }),
+                    ),
+                    Span::styled(bar, Style::default().fg(bar_color)),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{:>10}", size_str),
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    ),
+                ]))
+            }).collect()
+        };
+
+        let size_block = Block::default()
+            .title(" 📊 Disk Analyzer (z:close  j/k:nav  Enter:open) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Magenta));
+
+        let size_list = List::new(size_items)
+            .block(size_block)
+            .highlight_style(
+                Style::default().bg(Color::Magenta).fg(Color::Black).add_modifier(Modifier::BOLD),
+            );
+
+        let mut size_state = ListState::default();
+        if !app.size_entries.is_empty() && !app.size_loading {
+            size_state.select(Some(app.size_cursor));
+        }
+        frame.render_stateful_widget(size_list, panes[1], &mut size_state);
+    } else {
+        // ── Normal preview pane ──────────────────────────────────────────
+        let preview_items: Vec<ListItem> = if app.preview_content.is_empty() {
+            vec![ListItem::new("No preview")]
+        } else {
+            let total = app.preview_content.len();
+            app.clamp_scroll(total, visible_height);
+            app.preview_content
+                .iter()
+                .skip(app.preview_scroll)
+                .take(visible_height)
+                .map(|line| ListItem::new(line.clone()).style(Style::default().fg(Color::Gray)))
+                .collect()
+        };
+
+        let right_title = match app.active_pane {
+            Pane::Right => "Preview *",
+            _ => "Preview",
+        };
+
+        let right_block = Block::default()
+            .title(right_title)
+            .borders(Borders::ALL)
+            .border_style(match app.active_pane {
+                Pane::Right => Style::default().fg(Color::Yellow),
+                _ => Style::default(),
+            });
+
+        let right = List::new(preview_items).block(right_block).highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        let mut right_state = ListState::default();
+        if matches!(app.active_pane, Pane::Right) {
+            let relative = app.preview_cursor.saturating_sub(app.preview_scroll);
+            right_state.select(Some(relative));
+        } else {
+            right_state.select(None);
+        }
+        frame.render_stateful_widget(right, panes[1], &mut right_state);
+    }
 
     // ── Status bar (✨ update badge shown when newer version detected) ───────────
     let default_hint = "rex | q:quit  Tab:pane  hjkl:nav  r:rename  i:info  d:delete  y:copy  p:paste  u:undo  /:search";
@@ -530,6 +603,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Line::from(""),
             Line::from(Span::styled("  General", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
             Line::from("  ?            Toggle this help"),
+            Line::from("  z            📊 Disk analyzer (ncdu-style size view)"),
             Line::from("  U            📖 Changelog (what's new)"),
             Line::from("  q            Quit"),
             Line::from(""),

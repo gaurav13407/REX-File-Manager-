@@ -200,6 +200,40 @@ fn spawn_update_check(tx: smpsc::Sender<String>) {
     });
 }
 
+/// Recursively compute the total size of a directory.
+fn get_dir_size(path: &std::path::Path) -> u64 {
+    let mut size = 0u64;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                size += get_dir_size(&p);
+            } else {
+                size += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    size
+}
+
+/// Compute sizes for all children of `dir`, sorted biggest-first.
+fn compute_sizes(dir: &std::path::Path) -> Vec<(std::path::PathBuf, u64)> {
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let size = if path.is_dir() {
+                get_dir_size(&path)
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
+            result.push((path, size));
+        }
+    }
+    result.sort_by(|a, b| b.1.cmp(&a.1));
+    result
+}
+
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
@@ -244,6 +278,9 @@ fn main() -> Result<(), io::Error> {
     // Background update check — non-blocking, fires once at startup
     let (update_tx, update_rx) = smpsc::channel::<String>();
     spawn_update_check(update_tx);
+
+    // Disk analyzer (size mode) channel
+    let (size_tx, size_rx) = smpsc::channel::<Vec<(std::path::PathBuf, u64)>>();
 
     while !app.should_quit {
         // Update status message expiry (auto-clear old messages)
@@ -315,7 +352,15 @@ app.search_results.sort_by(|a, b| {
         app.set_status_timeout(msg);
         needs_draw = true;
     }
-} 
+}
+
+        // Receive size analyzer results (non-blocking)
+        if let Ok(result) = size_rx.try_recv() {
+            app.size_entries = result;
+            app.size_loading = false;
+            app.size_cursor = 0;
+            needs_draw = true;
+        }
 
         // Draw FIRST — instant visual feedback regardless of preview state.
         if needs_draw {
@@ -864,10 +909,60 @@ status_tx.clone(),
                     continue;
                 }
 
+                // ── Size mode: j/k navigate, Enter opens dir, Esc exits ──────
+                if app.size_mode {
+                    match key.code {
+                        KeyCode::Char('j') => {
+                            if app.size_cursor + 1 < app.size_entries.len() {
+                                app.size_cursor += 1;
+                            }
+                        }
+                        KeyCode::Char('k') => {
+                            if app.size_cursor > 0 { app.size_cursor -= 1; }
+                        }
+                        KeyCode::Enter => {
+                            if let Some((path, _)) = app.size_entries.get(app.size_cursor).cloned() {
+                                if path.is_dir() {
+                                    // Navigate into the directory AND rescan sizes
+                                    app.left.path = path.clone();
+                                    app.left.refresh();
+                                    app.refresh_preview();
+                                    app.size_loading = true;
+                                    let tx = size_tx.clone();
+                                    let p = path.clone();
+                                    std::thread::spawn(move || {
+                                        let _ = tx.send(compute_sizes(&p));
+                                    });
+                                }
+                            }
+                        }
+                        KeyCode::Char('z') | KeyCode::Esc | KeyCode::Char('q') => {
+                            app.size_mode = false;
+                        }
+                        _ => {}
+                    }
+                    needs_draw = true;
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('?') => { app.show_help = true; }
                     KeyCode::Char('i') => { app.show_info = !app.show_info; }
+
+                    // z — toggle disk analyzer mode (ncdu-style)
+                    KeyCode::Char('z') => {
+                        app.size_mode = !app.size_mode;
+                        if app.size_mode {
+                            app.size_loading = true;
+                            app.size_entries.clear();
+                            let path = app.left.path.clone();
+                            let tx = size_tx.clone();
+                            std::thread::spawn(move || {
+                                let _ = tx.send(compute_sizes(&path));
+                            });
+                        }
+                    }
 
                     // U — open changelog (or update popup if available)
                     KeyCode::Char('U') => {

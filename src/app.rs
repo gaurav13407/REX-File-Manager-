@@ -212,9 +212,14 @@ pub struct App {
     pub input_mode: bool,                 // Creating file/folder
     pub input_text: String,               // Filename/folder name being typed
     pub create_dir: bool,                 // true = folder, false = file
-    pub disk_total:u64,
-    pub disk_used:u64,
-    pub disk_free:u64,
+    pub disk_total: u64,
+    pub disk_used: u64,
+    pub disk_free: u64,
+    // Disk analyzer mode (ncdu-style)
+    pub size_mode: bool,
+    pub size_entries: Vec<(std::path::PathBuf, u64)>,
+    pub size_cursor: usize,
+    pub size_loading: bool,
 }
 
 impl App {
@@ -268,6 +273,10 @@ impl App {
             disk_total,
             disk_used,
             disk_free,
+            size_mode: false,
+            size_entries: Vec::new(),
+            size_cursor: 0,
+            size_loading: false,
         }
     }
 
