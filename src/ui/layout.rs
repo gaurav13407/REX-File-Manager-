@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
@@ -13,7 +13,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let vertical = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Min(1),    // panes
+            Constraint::Length(1), // status bar
+            Constraint::Length(1), // disk usage bar
+        ])
         .split(size);
 
     let panes = Layout::default()
@@ -159,6 +163,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .style(Style::default().bg(Color::Cyan).fg(Color::Black))
             .title(status_text);
         frame.render_widget(status_bar, vertical[1]);
+
+        // Disk usage gauge (always visible)
+        render_disk_gauge(frame, app, vertical[2]);
         return;
     }
 
@@ -274,6 +281,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let status = Block::default().style(status_style).title(status_text);
         frame.render_widget(status, vertical[1]);
     }
+
+    // ── Disk usage gauge (always visible at the bottom) ──────────────────────
+    render_disk_gauge(frame, app, vertical[2]);
 
     // ── Delete confirmation popup ─────────────────────────────────────────────
     if app.confirm_delete {
@@ -724,6 +734,47 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             frame.render_widget(info_popup, info_area);
         }
     }
+}
+
+/// Render a compact disk usage gauge in a single row.
+fn render_disk_gauge(frame: &mut Frame, app: &App, area: Rect) {
+    if app.disk_total == 0 {
+        let empty = Block::default()
+            .style(Style::default().bg(Color::Black).fg(Color::DarkGray))
+            .title(" Disk: N/A ");
+        frame.render_widget(empty, area);
+        return;
+    }
+
+    let usage_percent = ((app.disk_used as f64 / app.disk_total as f64) * 100.0) as u16;
+    let ratio = (app.disk_used as f64 / app.disk_total as f64).min(1.0);
+
+    let label = format!(
+        " 💾 {} / {} ({}%) │ Free: {} ",
+        crate::app::format_size(app.disk_used),
+        crate::app::format_size(app.disk_total),
+        usage_percent,
+        crate::app::format_size(app.disk_free),
+    );
+
+    // Color-code by severity
+    let gauge_color = if usage_percent >= 90 {
+        Color::Red
+    } else if usage_percent >= 70 {
+        Color::Yellow
+    } else {
+        Color::Green
+    };
+
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(gauge_color).bg(Color::Black))
+        .ratio(ratio)
+        .label(Span::styled(
+            label,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ));
+
+    frame.render_widget(gauge, area);
 }
 
 /// Returns a centered `Rect` of fixed height (rows) and percentage width.

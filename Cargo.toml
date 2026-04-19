@@ -27,3 +27,4 @@ notify = "6"
 dirs = "5"
 ureq = { version = "2", features = ["json"] }
 nucleo = "0.5"
+sysinfo="0.30"

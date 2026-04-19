@@ -2,6 +2,53 @@ use crate::fs::navigator::Navigator;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
+use sysinfo::Disks;
+
+/// Query disk usage for the partition containing `path`.
+/// Returns (total, used, available) in bytes.
+pub fn get_disk_info(path: &std::path::Path) -> Option<(u64, u64, u64)> {
+    let disks = Disks::new_with_refreshed_list();
+
+    // Find the best (longest) mount-point match for accuracy
+    let mut best: Option<(&sysinfo::Disk, usize)> = None;
+    for disk in disks.list() {
+        let mp = disk.mount_point();
+        if path.starts_with(mp) {
+            let len = mp.as_os_str().len();
+            if best.map_or(true, |(_, prev_len)| len > prev_len) {
+                best = Some((disk, len));
+            }
+        }
+    }
+
+    best.map(|(disk, _)| {
+        let total = disk.total_space();
+        let available = disk.available_space();
+        let used = total.saturating_sub(available);
+        (total, used, available)
+    })
+}
+
+/// Format bytes into a human-readable string (B / KB / MB / GB / TB).
+pub fn format_size(bytes: u64) -> String {
+    let b = bytes as f64;
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    const TB: f64 = GB * 1024.0;
+
+    if b >= TB {
+        format!("{:.2} TB", b / TB)
+    } else if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.2} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.2} KB", b / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
@@ -165,11 +212,17 @@ pub struct App {
     pub input_mode: bool,                 // Creating file/folder
     pub input_text: String,               // Filename/folder name being typed
     pub create_dir: bool,                 // true = folder, false = file
+    pub disk_total:u64,
+    pub disk_used:u64,
+    pub disk_free:u64,
 }
 
 impl App {
     pub fn new() -> Self {
         let cwd = std::env::current_dir().unwrap();
+
+        // Fetch disk usage for the starting directory
+        let (disk_total, disk_used, disk_free) = get_disk_info(&cwd).unwrap_or((0, 0, 0));
 
         Self {
             left: Navigator::new(cwd.clone()),
@@ -212,6 +265,18 @@ impl App {
             input_mode: false,
             input_text: String::new(),
             create_dir: false,
+            disk_total,
+            disk_used,
+            disk_free,
+        }
+    }
+
+    /// Refresh disk usage stats for the current directory's partition.
+    pub fn refresh_disk_info(&mut self) {
+        if let Some((total, used, free)) = get_disk_info(&self.left.path) {
+            self.disk_total = total;
+            self.disk_used = used;
+            self.disk_free = free;
         }
     }
 

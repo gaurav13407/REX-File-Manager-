@@ -258,6 +258,9 @@ fn main() -> Result<(), io::Error> {
                 .ok();
 
             current_watch_path = app.left.path.clone();
+
+            // Refresh disk stats for the new directory's partition
+            app.refresh_disk_info();
         }
 
         // Receive async search results (non-blocking)
